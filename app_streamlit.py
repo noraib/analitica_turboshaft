@@ -3,6 +3,12 @@ import streamlit  as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.figure_factory as ff
+from sklearn.decomposition import PCA
+import plotly.graph_objects as go
+from scipy.stats import gaussian_kde
 import seaborn as sns
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
@@ -25,7 +31,7 @@ st.set_page_config(
     page_title="Detección de Fallos en Motores Turboshaft",
     layout="wide"
 )
-st.title("Detección de Fallos en Motores Turboshaft")
+st.title("🚁 Detección de Fallos en Motores Turboshaft")
 st.markdown("---")
 
 
@@ -69,7 +75,7 @@ tab1, tab2, tab3 = st.tabs(["Contexto del Proyecto",
 
 #----TAB 1: INFORMACION BASICA----#
 with tab1:
-    st.header("Contexto del Proyecto")
+    st.header("🌐 Contexto del Proyecto")
     container1 = st.container(width=6000)
     container1.subheader("Evolución de la Industria 4.0")
     container1.markdown("La industria ha ido evolucionando a lo largo del tiempo, desde el siglo XVIII, cuando surgieron las primeras máquinas que reemplazaron el trabajo manual de los trabajadores, hasta hoy, cuando siguen surgiendo nuevas tecnologías para facilitar, mejorar y optimizar el rendimiento en la fabricación y el mantenimiento de sistemas industriales.")        
@@ -110,7 +116,7 @@ with tab1:
             st.dataframe(pd.DataFrame(buffer))
 
 with tab2:
-    st.header("Análisis Exploratorio (EDA)")
+    st.header("🔍 Análisis Exploratorio (EDA)")
     # Verificar si los datos están cargados
     if 'df' not in st.session_state:
         st.warning("Los datos no se han cargado. Ve a la pestaña 'Contexto' y verifica la carga.")
@@ -122,8 +128,11 @@ with tab2:
         analysis_option = st.selectbox(
             "Selecciona tipo de análisis:",
             ["📊 Estadísticas Descriptivas", 
-             "📈 Distribuciones", 
+             "📈 Distribuciones",
+             "⌚️ Tendencia temporal",
              "🔗 Matriz de Correlación",
+             "📡 Radar por fallo",
+             "🧭 PCA",
              "🎯 Análisis por Clase"]
         )
         
@@ -159,7 +168,24 @@ with tab2:
                                f'{int(height)}', ha='center', va='bottom')
                     
                     st.pyplot(fig)
-        
+
+                st.subheader("Parallel Coordinates por Tipo de Fallo")
+                numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+                le = LabelEncoder()
+                df["Fault_Code"] = le.fit_transform(df["Fault_Label"])
+
+                fig = px.parallel_coordinates(
+                    df,
+                    dimensions=numeric_cols,
+                    color="Fault_Code",
+                    labels={col: col for col in numeric_cols},
+                    title="Parallel coordinates por tipo de tallo",
+                    color_continuous_scale=px.colors.diverging.Tealrose,
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+                        
         # 2. DISTRIBUCIONES
         elif analysis_option == "📈 Distribuciones":
             st.subheader("Análisis de Distribuciones")
@@ -173,5 +199,203 @@ with tab2:
                     numeric_cols,
                     default=numeric_cols[:2] if len(numeric_cols) >= 2 else numeric_cols
                 )
+            if selected_cols:
+                for col in selected_cols:
+
+                    data = df[col].dropna()
+                    kde = gaussian_kde(data)
+
+                    x_vals = np.linspace(data.min(), data.max(), 300)
+                    y_vals = kde(x_vals)
+
+                    fig = go.Figure()
+
+                    fig.add_trace(go.Scatter(
+                        x=x_vals,
+                        y=y_vals,
+                        mode="lines",
+                        fill="tozeroy",
+                        line=dict(color="royalblue", width=3),
+                        name=col
+                    ))
+
+                    fig.update_layout(
+                        title=f"Distribución de {col}",
+                        xaxis_title=col,
+                        yaxis_title="Densidad",
+                        height=400,
+                        template="simple_white",
+                        margin=dict(l=50, r=50, t=60, b=50)
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+        elif analysis_option == "🔗 Matriz de Correlación":
+            st.subheader("🔗 Matriz de Correlación")
+
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+            st.write("Selecciona columnas para incluir en la matriz:")
+            selected_corr_cols = st.multiselect(
+                "Selecciona columnas para visualizar:",
+                numeric_cols,
+                default=[]
+            )
+
+            if len(selected_corr_cols) == 0:
+                corr_df = df[numeric_cols].corr()
+                st.info("No has seleccionado ninguna columna. Se mostrará la matriz completa.")
+            else:
+                corr_df = df[selected_corr_cols].corr()
+
+            fig = px.imshow(
+                corr_df,
+                text_auto=".2f",
+                color_continuous_scale="RdBu",
+                zmin=-1, #para que ese entre 1 y -1
+                zmax=1,
+                aspect="auto",
+                title="Matriz de correlación"
+            )
+
+            fig.update_layout(
+                height=800 if len(corr_df.columns) > 6 else 600,
+                margin=dict(l=40, r=40, t=60, b=40),
+                coloraxis_colorbar=dict(
+                    title="Correlación",
+                    ticks="outside"
+                )
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+        
+        elif analysis_option == "⌚️ Tendencia temporal":
+            st.subheader("⌚️ Tendencias temporales (Time-Series)")
+
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+            col = st.selectbox("Selecciona una variable para analizar su evolución temporal:", numeric_cols)
+
+            fig = go.Figure()
+
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df[col],
+                mode="lines",
+                line=dict(color="royalblue", width=2),
+                name=col
+            ))
+
+            fig.update_layout(
+                title=f"Evolución Temporal de {col}",
+                xaxis_title="Tiempo (índice de registro)",
+                yaxis_title=col,
+                height=400,
+                template="simple_white"
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif analysis_option == "📡 Radar por fallo":
+            st.subheader("📡 Radar chart por tipo de fallo")
+
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+            col = st.selectbox("Selecciona una variable numérica:", numeric_cols)
+
+            avg = df.groupby("Fault_Label")[col].mean().reset_index()
+
+            fig = px.line_polar(
+                avg,
+                r=col,
+                theta="Fault_Label",
+                line_close=True,
+                title=f"Radar Chart de {col} por Tipo de Fallo",
+                range_r=[avg[col].min(), avg[col].max()],
+                template="simple_white"
+            )
+
+            fig.update_traces(fill="toself", line=dict(width=3))
+
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif analysis_option == "🧭 PCA":
+            st.subheader("🧭 PCA de los 3 principales componentes")
+
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            clean_numeric = [c for c in numeric_cols if c not in ["Fault_Code"]]
+
+            X = df[clean_numeric].dropna()
+            y = df["Fault_Label"]
+
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            pca = PCA(n_components=3)
+            pcs = pca.fit_transform(X_scaled)
+            loadings = pca.components_.T
+
+            pca_df = pd.DataFrame({
+                "PC1": pcs[:, 0],
+                "PC2": pcs[:, 1],
+                "PC3": pcs[:, 2],
+                "Fault_Label": y
+            })
+
+            fig = go.Figure()
+
+            fig.add_trace(go.Scatter3d(
+                x=pca_df["PC1"],
+                y=pca_df["PC2"],
+                z=pca_df["PC3"],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    opacity=0.75,
+                    color=pca_df["Fault_Label"].astype('category').cat.codes,
+                    colorscale="Viridis"
+                ),
+                text=y,
+                hovertemplate="<b>Clase:</b> %{text}",
+                name="Muestras"
+            ))
+
+            arrow_scale = 3
+
+            for i, feature in enumerate(clean_numeric):
+                fig.add_trace(go.Scatter3d(
+                    x=[0, loadings[i, 0] * arrow_scale],
+                    y=[0, loadings[i, 1] * arrow_scale],
+                    z=[0, loadings[i, 2] * arrow_scale],
+                    mode='lines+text',
+                    line=dict(color="black", width=6),
+                    text=[None, feature],
+                    textposition="top center",
+                    name=feature,
+                    showlegend=False
+                ))
+
+            var_exp = pca.explained_variance_ratio_ * 100
+            fig.update_layout(
+                title=(
+                    f"PCA 3D Biplot<br>"
+                    f"Varianza explicada: "
+                    f"PC1={var_exp[0]:.1f}% • "
+                    f"PC2={var_exp[1]:.1f}% • "
+                    f"PC3={var_exp[2]:.1f}%"
+                ),
+                scene=dict(
+                    xaxis_title=f"PC1 ({var_exp[0]:.1f}%)",
+                    yaxis_title=f"PC2 ({var_exp[1]:.1f}%)",
+                    zaxis_title=f"PC3 ({var_exp[2]:.1f}%)",
+                ),
+                height=700,
+                template="simple_white",
+                margin=dict(l=0, r=0, t=80, b=0)
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+
 
 
