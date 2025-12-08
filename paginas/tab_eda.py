@@ -24,7 +24,7 @@ def run():
     else:
         df = st.session_state['df']
         st.success(f"Analizando dataset con {df.shape[0]} registros")
-        
+        df = df.drop("Fault_Label_Encoded", axis=1)
         #Opciones
         opcion_analisis = st.selectbox(
             "Selecciona tipo de análisis:",
