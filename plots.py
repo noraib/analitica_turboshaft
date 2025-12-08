@@ -5,6 +5,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from math import pi
 import pandas as pd
 from matplotlib.patches import Patch
+from sklearn.metrics import confusion_matrix
 
 
 def plot_distribuciones_outliers(df, df_stats):
@@ -83,6 +84,33 @@ def plot_correlacion_heatmap(corr_matrix, vmin=-1, vmax=1, title='Matriz de Corr
     
     return fig
 
+
+
+
+def plot_confusion_matrix(y_true, y_pred, class_names, title="Matriz de Confusión"):
+    """
+    Dibuja una matriz de confusión usando Seaborn heatmap.
+
+    Parámetros:
+    -----------
+    y_true : array-like
+        Valores reales.
+    y_pred : array-like
+        Valores predichos.
+    class_names : list
+        Nombres de las clases.
+    title : str
+        Título del gráfico.
+    """
+    cm = confusion_matrix(y_true, y_pred)
+    
+    fig, ax = plt.subplots(figsize=(8,6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+    ax.set_xlabel("Predicción")
+    ax.set_ylabel("Verdadero")
+    ax.set_title(title)
+    plt.tight_layout()
+    return fig
 
 
 def plot_heatmap_medianas(median_matrix, title="Heatmap de medianas"):

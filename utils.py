@@ -1,8 +1,18 @@
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import numpy as np
+import pandas as pd
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from sklearn.utils.class_weight import compute_class_weight
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
 
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
 
 #----DETECCION OUTLIERS----#
 def calcular_outliers_iqr(df):
@@ -116,6 +126,149 @@ def calcular_medianas_por_fallo(df, fallos, sensores_principales):
         for sensor in sensores_principales:
             median_matrix.loc[fallo, sensor] = df[df['Fault_Label'] == fallo][sensor].median()
     return median_matrix.astype(float)
+
+
+
+
+#----MODELOS----#
+def preprocesar_datos(df, target_col="Fault_Label"):
+    le = LabelEncoder()
+    df[f"{target_col}_Encoded"] = le.fit_transform(df[target_col])
+    
+    numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+    if f"{target_col}_Encoded" in numeric_cols:
+        numeric_cols.remove(f"{target_col}_Encoded")
+    
+    X = df[numeric_cols]
+    y = df[f"{target_col}_Encoded"]
+    return X, y, le
+
+
+def split_data(X, y, test_size=0.3, random_state=111):
+    return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
+
+
+def evaluar_modelo_scikit(modelo, X_train, X_test, y_train, y_test, nombre_modelo, le):
+    """Entrena y evalúa un modelo, mostrando métricas clave"""
+    
+    # Entrenar modelo
+    modelo.fit(X_train, y_train)
+    
+    # Predecir
+    y_pred = modelo.predict(X_test)
+    y_pred_proba = modelo.predict_proba(X_test) if hasattr(modelo, "predict_proba") else None
+    
+    # Métricas
+    acc = accuracy_score(y_test, y_pred)
+    f1_global = f1_score(y_test, y_pred, average='weighted')
+    f1_por_clase = f1_score(y_test, y_pred, average=None)
+    
+    # Mostrar resultados
+    print(f"\n--- {nombre_modelo} ---")
+    print(f"Accuracy: {acc:.4f}")
+    print(f"F1-Score (global, weighted): {f1_global:.4f}")
+    print("\nF1-Score por clase:")
+    for i, clase in enumerate(le.classes_):
+        print(f"{clase}: {f1_por_clase[i]:.4f}")
+    
+    print("\nMatriz de Confusión:")
+    print(confusion_matrix(y_test, y_pred))
+    
+    print("\nReporte de Clasificación:")
+    print(classification_report(y_test, y_pred, target_names=le.classes_))
+    
+    return {
+        'modelo': modelo,
+        'accuracy': acc,
+        'f1_global': f1_global,
+        'f1_por_clase': f1_por_clase,
+        'y_true': y_test,       
+        'y_pred': y_pred,
+        'y_pred_proba': y_pred_proba
+    }
+
+
+
+def entrenar_evaluar_pytorch(model, X_train, X_test, y_train, y_test, le,
+                             epochs=50, batch_size=32, lr=0.001, device='cpu',
+                             class_weights=None):
+    
+    #Convertir a tensores
+    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+    y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+    
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+    
+    model = model.to(device)
+    
+    #Definir el criterio (usar pesos solo si se pasan)
+    if class_weights is not None:
+        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+    else:
+        criterion = nn.CrossEntropyLoss()
+    
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    
+    #Entrenamiento
+    model.train()
+    for epoch in range(epochs):
+        for xb, yb in train_loader:
+            xb, yb = xb.to(device), yb.to(device)
+            optimizer.zero_grad()
+            outputs = model(xb)
+            loss = criterion(outputs, yb)
+            loss.backward()
+            optimizer.step()
+    
+    #Evaluación
+    model.eval()
+    all_preds = []
+    all_true = []
+    with torch.no_grad():
+        for xb, yb in test_loader:
+            xb = xb.to(device)
+            outputs = model(xb)
+            preds = torch.argmax(outputs, dim=1).cpu().numpy()
+            all_preds.extend(preds)
+            all_true.extend(yb.numpy())
+    
+    all_true = np.array(all_true)
+    all_preds = np.array(all_preds)
+    
+    #Metricas
+    acc = accuracy_score(all_true, all_preds)
+    f1_global = f1_score(all_true, all_preds, average='weighted')
+    f1_por_clase = f1_score(all_true, all_preds, average=None)
+    
+    #Mostrar resultados
+    print("\n--- Resultados del Modelo ---")
+    print("Accuracy:", acc)
+    print("F1-score (weighted):", f1_global)
+    print("F1-score por clase:")
+    for i, clase in enumerate(le.classes_):
+        print(f"{clase}: {f1_por_clase[i]:.4f}")
+    print("\nMatriz de Confusión:\n", confusion_matrix(all_true, all_preds))
+    print("\nReporte de Clasificación:\n", classification_report(all_true, all_preds, target_names=le.classes_))
+    
+    resultados = {
+        'accuracy': acc,
+        'f1_global': f1_global,
+        'f1_por_clase': f1_por_clase,
+        'y_pred': all_preds,
+        'y_true': all_true,
+        'model': model
+    }
+    
+    return resultados
+
+
 
 
 

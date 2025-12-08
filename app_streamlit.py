@@ -39,6 +39,7 @@ if 'df' not in st.session_state:
 
 
 #----MENU LATERAL---- #
+st.sidebar.header("Pestañas")
 seccion = st.sidebar.radio(
     "Selecciona una sección:",
     ["Contexto", "EDA", "Modelado Machine Learning"]
