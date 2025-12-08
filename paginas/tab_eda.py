@@ -1,0 +1,540 @@
+import streamlit  as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from sklearn.decomposition import PCA
+import plotly.graph_objects as go
+from sklearn.preprocessing import StandardScaler
+
+import warnings
+warnings.filterwarnings('ignore')
+
+
+from utils import *
+from plots import * 
+
+
+#----TAB 2: ANALISIS EXPLORATORIO----#
+def run():
+    st.header("🔍 Análisis Exploratorio (EDA)")
+    #Verificar si los datos estan cargados
+    if 'df' not in st.session_state:
+        st.warning("Los datos no se han cargado. Ve a la pestaña 'Contexto' y verifica la carga.")
+    else:
+        df = st.session_state['df']
+        st.success(f"Analizando dataset con {df.shape[0]} registros")
+        
+        #Opciones
+        opcion_analisis = st.selectbox(
+            "Selecciona tipo de análisis:",
+            ["📊 Estadísticas Descriptivas", 
+             "📈 Distribuciones",
+             "🔗 Matriz de Correlación",
+             "❗ Fallos",
+             "⚙️ Sensores",
+             "⌚️ Tendencia temporal",
+             "📡 Radar por fallo",
+             "🧭 PCA"]
+        )
+        
+
+
+        #----Estadisticas Descriptivas----#
+        if opcion_analisis == "📊 Estadísticas Descriptivas":
+            st.subheader("Estadísticas Descriptivas")
+            st.dataframe(df.describe())
+            
+            # # Mostrar información de tipos de fallo si existe
+            # if 'Fault_Label' in df.columns:
+            #     st.subheader("Distribución de Fallos")
+            #     fault_counts = df['Fault_Label'].value_counts()
+                
+            #     col1, col2 = st.columns(2)
+            #     with col1:
+            #         st.write("Conteo por clase:")
+            #         st.dataframe(fault_counts)
+                
+            #     with col2:
+            #         # Gráfico de barras
+            #         fig, ax = plt.subplots(figsize=(10, 5))
+            #         bars = ax.bar(fault_counts.index, fault_counts.values, color='skyblue')
+            #         ax.set_title('Distribución de Tipos de Fallo')
+            #         ax.set_xlabel('Tipo de Fallo')
+            #         ax.set_ylabel('Cantidad')
+            #         ax.tick_params(axis='x', rotation=45)
+                    
+            #         for bar in bars:
+            #             height = bar.get_height()
+            #             ax.text(bar.get_x() + bar.get_width()/2., height + 10,
+            #                    f'{int(height)}', ha='center', va='bottom')
+                    
+            #         st.pyplot(fig)
+
+            #     st.subheader("Parallel Coordinates por Tipo de Fallo")
+            #     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+            #     le = LabelEncoder()
+            #     df["Fault_Code"] = le.fit_transform(df["Fault_Label"])
+
+            #     fig = px.parallel_coordinates(
+            #         df,
+            #         dimensions=numeric_cols,
+            #         color="Fault_Code",
+            #         labels={col: col for col in numeric_cols},
+            #         title="Parallel coordinates por tipo de tallo",
+            #         color_continuous_scale=px.colors.diverging.Tealrose,
+            #     )
+
+            #     st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+
+        #----Distribuciones----#
+        elif opcion_analisis == "📈 Distribuciones":
+            st.subheader("Análisis de Distribuciones y Outliers")
+            
+            st.write("Selecciona variables para visualizar su distribución:")
+            #Seleccionar columnas numericas
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            
+            if numeric_cols:
+                selected_cols = st.multiselect(
+                    "Selecciona columnas para visualizar:",
+                    numeric_cols,
+                )
+
+            if len(selected_cols) == 0:
+                resultados_df = generar_df_estadisticas_outliers(df[numeric_cols])
+                st.info("No has seleccionado ninguna variable. Se mostrarán todas las distribuciones.")
+            else:
+                resultados_df = generar_df_estadisticas_outliers(df[selected_cols])
+  
+            fig = plot_distribuciones_outliers(df, resultados_df)
+            #Mostrar en app
+            plt.tight_layout()
+            st.pyplot(fig)
+
+
+                # for col in selected_cols:
+                #     data = df[col].dropna()
+                #     kde = gaussian_kde(data)
+
+                #     x_vals = np.linspace(data.min(), data.max(), 300)
+                #     y_vals = kde(x_vals)
+
+                #     fig = go.Figure()
+
+                #     fig.add_trace(go.Scatter(
+                #         x=x_vals,
+                #         y=y_vals,
+                #         mode="lines",
+                #         fill="tozeroy",
+                #         line=dict(color="royalblue", width=3),
+                #         name=col
+                #     ))
+
+                #     fig.update_layout(
+                #         title=f"Distribución de {col}",
+                #         xaxis_title=col,
+                #         yaxis_title="Densidad",
+                #         height=400,
+                #         template="simple_white",
+                #         margin=dict(l=50, r=50, t=60, b=50)
+                #     )
+
+                #     st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+        #----Correlaciones----#
+        elif opcion_analisis == "🔗 Matriz de Correlación":
+            st.subheader("🔗 Matriz de Correlación")
+
+            #Seleccionar columnas numericas
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+            st.write("Selecciona columnas para incluir en la matriz:")
+            if numeric_cols:
+                selected_corr_cols = st.multiselect(
+                    "Selecciona columnas para visualizar:",
+                    numeric_cols
+                )
+
+            if len(selected_corr_cols) == 0:
+                corr_matrix = calculo_matriz_correlacion(df, numeric_cols)
+                # corr_df = df[numeric_cols].corr()
+                st.info("No has seleccionado ninguna columna. Se mostrará la matriz completa.")
+            else:
+                corr_matrix = df[selected_corr_cols].corr()
+  
+            fig = plot_correlacion_heatmap(corr_matrix)
+            #Mostrar en app
+            plt.tight_layout()
+            st.pyplot(fig)
+
+            # else:
+            #     corr_df = df[selected_corr_cols].corr()
+
+            # fig = px.imshow(
+            #     corr_df,
+            #     text_auto=".2f",
+            #     color_continuous_scale="RdBu",
+            #     zmin=-1, #para que ese entre 1 y -1
+            #     zmax=1,
+            #     aspect="auto",
+            #     title="Matriz de correlación"
+            # )
+
+            # fig.update_layout(
+            #     height=800 if len(corr_df.columns) > 6 else 600,
+            #     margin=dict(l=40, r=40, t=60, b=40),
+            #     coloraxis_colorbar=dict(
+            #         title="Correlación",
+            #         ticks="outside"
+            #     )
+            # )
+
+            # st.plotly_chart(fig, use_container_width=True)
+        
+
+
+
+
+        #----Analisis de fallos----#
+        elif opcion_analisis == "❗ Fallos":
+            st.subheader("❗ Fallos")
+            tab4, tab5, tab6 = st.tabs(["Análisis básico",
+                            "Distribución Normal y Fallos",
+                            "Distribución de fallos"])
+
+             
+            with tab4:
+                col1, col2, col3 = st.columns([1, 1, 1])
+                with col2:
+                    df["fallo"] = np.where(df["Fault_Label"] == "Normal", "Normal", "Fallos")
+                    fig = pie_chart(df, "fallo", paleta = ["#3f7afa", "#ff5e5e"], titulo="Distribucion: Normal vs Fallos")            
+                    st.pyplot(fig)
+
+            with tab5: 
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:   
+                    paleta = definicion_paleta(df, "Fault_Label")
+                    fig = bar_chart(df, "Fault_Label", paleta, "Distribucion de Tipos de Fallo", "Cantidad", "Tipo de Fallo")
+                    st.pyplot(fig)
+
+            with tab6:
+                col1, col2, col3 = st.columns([1, 1, 1])
+                with col2:
+                    df_fallos = df[df['Fault_Label'] != 'Normal']
+                    fig = pie_chart(df_fallos, "Fault_Label", titulo="Distribucion de Tipos de Fallos")
+                    st.pyplot(fig)
+
+
+
+
+
+
+        #----Analisis de sensores----#
+        elif opcion_analisis == "⚙️ Sensores":
+            st.subheader("⚙️ Sensores")
+            st.write("Selecciona sensores y fallos a analizar:")
+
+            # Sensores disponibles
+            sensores_disponibles = df.select_dtypes(include=[np.number]).columns.tolist()
+            if len(sensores_disponibles) == 0:
+                st.warning("No hay datos de sensores para analizar.")
+
+            # Fallos disponibles sin Normal
+            fallos_disponibles = df['Fault_Label'].unique().tolist()
+            if len(fallos_disponibles) == 0:
+                st.warning("No hay fallos para analizar.")
+
+            # Multiselect principal
+            fallos_seleccionados = st.multiselect(
+                "Selecciona tipos de fallo a comparar:",
+                fallos_disponibles,
+            )
+            sensores_seleccionados = st.multiselect(
+                "Selecciona sensores a comparar:",
+                sensores_disponibles,
+                key="sensores_tab_principal" #Para diferenciar del temporal
+            )
+
+         
+            if len(fallos_seleccionados) == 0 and len(sensores_seleccionados) == 0:
+                st.info("No has seleccionado ningún sensor ni fallo. Se mostrarán todos ellos.")
+                fallos_seleccionados = fallos_disponibles
+                sensores_seleccionados = sensores_disponibles
+
+
+            # Tabs
+            tab7, tab8, tab9= st.tabs([
+                "Heatmap medianas",
+                "Boxplots sensores por tipo de fallo",
+                "Sensores activados por fallo",
+            ])
+
+   
+            #--- Tab 7:Heatmap medianas---#
+            with tab7:
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    median_matrix = calcular_medianas_por_fallo(df, fallos_seleccionados, sensores_seleccionados)
+                    fig = plot_heatmap_medianas(median_matrix)
+                    plt.tight_layout()
+                    st.pyplot(fig)
+
+            #---Tab 8: Boxplots---#
+            with tab8:
+                col1, col2, col3 = st.columns([1, 2, 1])
+
+                if len(fallos_seleccionados) > 0 and len(sensores_seleccionados) == 0:
+                    #Solo fallos seleccionados --> todos los sensores
+                    df_filtrado = df[df['Fault_Label'].isin(fallos_seleccionados)]
+                    sensores_a_graficar = [col for col in df_filtrado.select_dtypes(include='number').columns if col != 'Fault_Label']
+                    fallos_a_graficar = fallos_seleccionados
+
+                elif len(fallos_seleccionados) == 0 and len(sensores_seleccionados) > 0:
+                    #Solo sensores seleccionados --> todos los fallos
+                    sensores_existentes = [s for s in sensores_seleccionados if s in df.columns]
+                    df_filtrado = df[sensores_existentes + ['Fault_Label']]
+                    sensores_a_graficar = sensores_existentes
+                    fallos_a_graficar = df['Fault_Label'].unique().tolist()
+    
+                else:
+                    #Ambos seleccionados o ninguno
+                    sensores_existentes = [s for s in sensores_seleccionados if s in df.columns]
+                    df_filtrado = df[df['Fault_Label'].isin(fallos_seleccionados)][sensores_existentes + ['Fault_Label']]
+                    sensores_a_graficar = sensores_existentes
+                    fallos_a_graficar = fallos_seleccionados
+
+                #Calcular medianas y pintar
+                with col2:
+                    median_matrix = calcular_medianas_por_fallo(df_filtrado, fallos_a_graficar, sensores_a_graficar)
+                    fig = boxplots_por_sensor(df_filtrado, sensores_a_graficar, fallos_a_graficar)
+                    plt.tight_layout()
+                    st.pyplot(fig)
+
+
+                #---Tab 9: Radarplots---#
+                with tab9:
+                    col1, col2, col3 = st.columns([1, 2, 1])
+
+                    with col2:
+                        # Sensores a graficar
+                        sensores_a_graficar = sensores_seleccionados if len(sensores_seleccionados) > 0 else [col for col in df.select_dtypes(include='number').columns if col != 'Fault_Label']
+
+                        # Filtrar df
+                        df_filtrado = df[df['Fault_Label'].isin(fallos_a_graficar)]
+
+                        # Calcular medianas
+                        median_matrix = calcular_medianas_por_fallo(df_filtrado, fallos_a_graficar, sensores_a_graficar)
+
+                        # Pintar radar
+                        fig = radar_plot(fallos_a_graficar, median_matrix, sensores_a_graficar)
+                        plt.tight_layout()
+                        st.pyplot(fig)
+
+
+
+            st.markdown("---")
+
+            st.subheader("Timeseries")
+            # Dividir la pantalla en dos columnas: izquierda para selección, derecha para plots
+            col1, col2 = st.columns([1, 3])
+
+            with col1:
+                fallos_disponibles = []
+                for f in df['Fault_Label'].unique():
+                    if f != "Normal":
+                        fallos_disponibles.append(f)
+
+                sensores_seleccionados = st.multiselect(
+                    "Selecciona sensores a comparar:",
+                    sensores_disponibles,
+                    key="sensores_timeline"
+                )
+
+
+
+                if len(sensores_seleccionados) == 0:
+                    st.info("No has seleccionado ningún sensor. Se mostrarán todos ellos.")
+                    sensores_seleccionados = sensores_disponibles
+
+            with col2:
+                #Tabs en la columna derecha
+                tab10, tab11 = st.tabs([
+                    "Timeline sensores",
+                    "Cambio de sensores"
+                ])
+
+                
+
+                #---Tab 10: Time Series fallos---#
+                with tab10:
+                    #Controles en la columna izquierda
+                    fallo_timeline = st.radio(
+                        "Selecciona un tipo de fallo a comparar:",
+                        fallos_disponibles,
+                        key="fallo_timeline"
+                    )
+                
+                    n_ejemplos = st.slider(
+                        "Número de ejemplos a mostrar",
+                        min_value=1,
+                        max_value=10,
+                        )
+                    fig, ejemplos_turbine = timeline_por_tipo_fallo(
+                        df,
+                        sensores_seleccionados,
+                        fallo_timeline,
+                        n_ejemplos=n_ejemplos
+                    )
+                    plt.tight_layout()
+                    st.pyplot(fig)
+
+
+
+                #---Tab 11: Cambio sensores---#
+                with tab11:
+                    plt.tight_layout()
+                    fig = plot_cambio_5h(df, sensores_seleccionados)
+                    st.pyplot(fig)
+
+
+
+
+
+
+
+
+        elif opcion_analisis == "⌚️ Tendencia temporal":
+            st.subheader("⌚️ Tendencias temporales (Time-Series)")
+
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+            col = st.selectbox("Selecciona una variable para analizar su evolución temporal:", numeric_cols)
+
+            fig = go.Figure()
+
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df[col],
+                mode="lines",
+                line=dict(color="royalblue", width=2),
+                name=col
+            ))
+
+            fig.update_layout(
+                title=f"Evolución Temporal de {col}",
+                xaxis_title="Tiempo (índice de registro)",
+                yaxis_title=col,
+                height=400,
+                template="simple_white"
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+        # elif opcion_analisis == "📡 Radar por fallo":
+        #     st.subheader("📡 Radar chart por tipo de fallo")
+
+        #     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+        #     col = st.selectbox("Selecciona una variable numérica:", numeric_cols)
+
+        #     avg = df.groupby("Fault_Label")[col].mean().reset_index()
+
+        #     fig = px.line_polar(
+        #         avg,
+        #         r=col,
+        #         theta="Fault_Label",
+        #         line_close=True,
+        #         title=f"Radar Chart de {col} por Tipo de Fallo",
+        #         range_r=[avg[col].min(), avg[col].max()],
+        #         template="simple_white"
+        #     )
+
+        #     fig.update_traces(fill="toself", line=dict(width=3))
+
+        #     st.plotly_chart(fig, use_container_width=True)
+
+        elif opcion_analisis == "🧭 PCA":
+            st.subheader("🧭 PCA de los 3 principales componentes")
+
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            clean_numeric = [c for c in numeric_cols if c not in ["Fault_Code"]]
+
+            X = df[clean_numeric].dropna()
+            y = df["Fault_Label"]
+
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            pca = PCA(n_components=3)
+            pcs = pca.fit_transform(X_scaled)
+            loadings = pca.components_.T
+
+            pca_df = pd.DataFrame({
+                "PC1": pcs[:, 0],
+                "PC2": pcs[:, 1],
+                "PC3": pcs[:, 2],
+                "Fault_Label": y
+            })
+
+            fig = go.Figure()
+
+            fig.add_trace(go.Scatter3d(
+                x=pca_df["PC1"],
+                y=pca_df["PC2"],
+                z=pca_df["PC3"],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    opacity=0.75,
+                    color=pca_df["Fault_Label"].astype('category').cat.codes,
+                    colorscale="Viridis"
+                ),
+                text=y,
+                hovertemplate="<b>Clase:</b> %{text}",
+                name="Muestras"
+            ))
+
+            arrow_scale = 3
+
+            for i, feature in enumerate(clean_numeric):
+                fig.add_trace(go.Scatter3d(
+                    x=[0, loadings[i, 0] * arrow_scale],
+                    y=[0, loadings[i, 1] * arrow_scale],
+                    z=[0, loadings[i, 2] * arrow_scale],
+                    mode='lines+text',
+                    line=dict(color="black", width=6),
+                    text=[None, feature],
+                    textposition="top center",
+                    name=feature,
+                    showlegend=False
+                ))
+
+            var_exp = pca.explained_variance_ratio_ * 100
+            fig.update_layout(
+                title=(
+                    f"PCA 3D Biplot<br>"
+                    f"Varianza explicada: "
+                    f"PC1={var_exp[0]:.1f}% • "
+                    f"PC2={var_exp[1]:.1f}% • "
+                    f"PC3={var_exp[2]:.1f}%"
+                ),
+                scene=dict(
+                    xaxis_title=f"PC1 ({var_exp[0]:.1f}%)",
+                    yaxis_title=f"PC2 ({var_exp[1]:.1f}%)",
+                    zaxis_title=f"PC3 ({var_exp[2]:.1f}%)",
+                ),
+                height=700,
+                template="simple_white",
+                margin=dict(l=0, r=0, t=80, b=0)
+            )
+
+            st.plotly_chart(fig, use_container_width=True)

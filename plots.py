@@ -20,24 +20,32 @@ def plot_distribuciones_outliers(df, df_stats):
             - 'percent': Porcentaje de outliers detectados
     """
     todas_columnas = df_stats.index.tolist()
-    fig, axes = plt.subplots(len(todas_columnas), 1, figsize=(18, 4*len(todas_columnas)))
 
-
+    #Si es solo una distribucion, no hacemos subplots
+    if len(todas_columnas) == 1:
+        fig, ax = plt.subplots(figsize=(16, 8))
+        axes = [ax]
+    else:
+        fig, axes = plt.subplots(len(todas_columnas), 1, figsize=(16, 4 * len(todas_columnas)))
+        #Si axes es un array 2D, aplanarlo para que matplotlib pueda graficarlo bien
+        if hasattr(axes, 'flatten'):
+            axes = axes.flatten()
+        
     for i, columna in enumerate(todas_columnas):
         ax = axes[i]
 
-        # Limites IQR
+        #Limites IQR
         lower = df_stats.loc[columna]['lower_bound']
         upper = df_stats.loc[columna]['upper_bound']
         outliers_mask = (df[columna] < lower) | (df[columna] > upper)
 
-        # Density plot
+        #Density plot
         sns.kdeplot(df[columna], ax=ax, fill=True, color='lightblue', alpha=0.6, linewidth=2)
 
-        # Marcar los outliers
+        #Marcar los outliers
         sns.rugplot(df[columna][outliers_mask], ax=ax, color='red', height=0.05, label='Outliers')
 
-        # Pintar las lineas de limites IQR
+        #Pintar las lineas de limites IQR
         ax.axvline(lower, color='green', linestyle='--', linewidth=2, label=f'Límite inferior: {lower:.2f}')
         ax.axvline(upper, color='orange', linestyle='--', linewidth=2, label=f'Límite superior: {upper:.2f}')
 
@@ -47,8 +55,7 @@ def plot_distribuciones_outliers(df, df_stats):
         ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
 
-    plt.tight_layout()
-    plt.show()
+    return fig
 
 
 
@@ -68,12 +75,13 @@ def plot_correlacion_heatmap(corr_matrix, vmin=-1, vmax=1, title='Matriz de Corr
     figsize=(16,12)
     cmap='RdBu_r'
 
-    plt.figure(figsize=figsize)
+
+    fig = plt.figure(figsize=figsize)
     sns.heatmap(corr_matrix, mask=mask, annot=True, cmap=cmap, center=0,
                 square=True, fmt='.2f', cbar_kws={'shrink': .8}, vmin=vmin, vmax=vmax)
     plt.title(title, fontsize=16, fontweight='bold', pad=20)
-    plt.tight_layout()
-    plt.show() 
+    
+    return fig
 
 
 
@@ -86,7 +94,9 @@ def plot_heatmap_medianas(median_matrix, title="Heatmap de medianas"):
     - title (str, opcional): Título del gráfico.
     """
     cmap='RdBu_r'
-    plt.figure(figsize=(14,8))
+    figsize=(14,8)
+    fig = plt.figure(figsize=figsize)
+
 
     sns.heatmap(
         median_matrix,
@@ -102,8 +112,8 @@ def plot_heatmap_medianas(median_matrix, title="Heatmap de medianas"):
     plt.xlabel('Sensores', fontsize=12)
     plt.ylabel('Tipo de Fallo', fontsize=12)
     plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.show()
+
+    return fig
 
 
 
@@ -148,7 +158,7 @@ def pie_chart(df, columna, paleta=None, titulo=None):
         titulo = f'Distribución de {columna}'
     ax.set_title(titulo, fontsize=14, fontweight='bold')
 
-    plt.show()
+    return fig
 
 
 
@@ -183,7 +193,8 @@ def bar_chart(df, columna, paleta=None, title="Bar Chart", eje_x="Eje x", eje_y=
         ax1.text(v + 0.01 * max_val, i, f"{v} ({porcentaje:.1f}%)", va='center', ha='left', fontweight='bold')
 
     
-    plt.show()
+    return fig
+
 
 
 
@@ -197,30 +208,43 @@ def boxplots_por_sensor(df, sensores=None, fallos=None):
     - df (pd.DataFrame): DataFrame con los datos.
     - sensores (list, opcional): lista de columnas de sensores a graficar. Si es None, usa todas las numéricas excepto 'Fault_Label'.
     - fallos (list, opcional): lista de fallos a considerar. Si es None, usa todos los valores únicos de 'Fault_Label'.
+
+    Retorna:
+    - fig (matplotlib.figure.Figure): Figura con todos los boxplots.
     """
-    if fallos is None:
+    if 'Fault_Label' not in df.columns:
+        raise ValueError("El DataFrame debe contener la columna 'Fault_Label'.")
+
+    # Si se pasan fallos, filtrar el DataFrame
+    if fallos is not None and len(fallos) > 0:
+        df = df[df['Fault_Label'].isin(fallos)]
+    else:
         fallos = df['Fault_Label'].unique().tolist()
-    
-    if sensores is None:
-        # Todas las columnas numéricas menos 'Fault_Label'
-        sensores = df.select_dtypes(include='number').columns.tolist()
-    
-    for sensor in sensores:
-        # Preparar los datos por fallo
+
+    # Si se pasan sensores, usar solo esos
+    if sensores is not None and len(sensores) > 0:
+        sensores = [s for s in sensores if s in df.columns]
+    else:
+        sensores = [col for col in df.select_dtypes(include='number').columns if col != 'Fault_Label']
+
+    # Crear figura
+    fig, axes = plt.subplots(len(sensores), 1, figsize=(16, 4 * len(sensores)))
+    if len(sensores) == 1:
+        axes = [axes]
+
+    for i, sensor in enumerate(sensores):
         box_data = [df[df['Fault_Label'] == fallo][sensor].values for fallo in fallos]
+        axes[i].boxplot(box_data, labels=fallos)
+        axes[i].set_ylabel(sensor, fontsize=11)
+        axes[i].tick_params(axis='x', rotation=45)
+        axes[i].grid(True, alpha=0.3, axis='y')
+        axes[i].axhline(y=0, color='red', linestyle='--', alpha=0.5)
+    
+    fig.suptitle("Distribución de sensores por tipo de fallo", fontsize=16, fontweight='bold', y=1.02)
 
-        # Ajustar tamaño de la figura según cantidad de fallos
-        figsize = (max(14, len(fallos)*1.5), 6)
+    plt.tight_layout()
+    return fig
 
-        plt.figure(figsize=figsize)
-        plt.boxplot(box_data, labels=fallos)
-        plt.title(f"Distribución de {sensor} por tipo de fallo", fontsize=14, fontweight='bold')
-        plt.ylabel(sensor, fontsize=12)
-        plt.xticks(rotation=45, ha='right')
-        plt.grid(True, alpha=0.3, axis='y')
-        plt.axhline(y=0, color='red', linestyle='--', alpha=0.5)
-        plt.tight_layout()
-        plt.show()
 
 
 
@@ -293,8 +317,8 @@ def radar_plot(fallos, median_matrix, sensores, umbral=0.3, factor=3):
                  fontsize=14, fontweight='bold', pad=20)
     ax.legend(loc='upper right', bbox_to_anchor=(1.0,1.0))
 
-    plt.tight_layout()
-    plt.show()
+    return fig
+    
 
 
 
@@ -362,10 +386,9 @@ def timeline_por_tipo_fallo(df, sensores, fallo=None, n_ejemplos=3):
     
     plt.suptitle(f'Análisis de {fallo} - {len(ejemplos)} ejemplos aleatorios', 
                 fontsize=16, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    plt.show()
     
-    return ejemplos
+    
+    return fig, ejemplos
 
 
 
@@ -499,5 +522,5 @@ def plot_cambio_5h(df, sensores):
     
     ax.grid(True, alpha=0.3, axis='y')
 
-    plt.tight_layout()
-    plt.show()
+    return fig
+    

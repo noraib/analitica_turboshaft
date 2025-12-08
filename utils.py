@@ -152,14 +152,19 @@ def analisis_patrones_por_fallo(fallos, median_matrix):
         
         #Sensores más altos que el promedio
         altos = medians[medians > 0.5].sort_values(ascending=False)
+        altos_dict = {sensor: valor for sensor, valor in altos.items()}
+
         if len(altos) > 0:
             print(f"  Sensores ALTOS: {', '.join([f'{s}:{v:.2f}' for s,v in altos.items()])}")
         
         #Sensores más bajos que el promedio
         bajos = medians[medians < -0.5].sort_values()
+        bajos_dict = {sensor: valor for sensor, valor in bajos.items()}
+
         if len(bajos) > 0:
             print(f"  Sensores BAJOS: {', '.join([f'{s}:{v:.2f}' for s,v in bajos.items()])}")
         
         #Sensor más característico
         caracteristico = medians.abs().idxmax()
+        
         print(f"  Sensor más CARACTERÍSTICO: {caracteristico} ({medians[caracteristico]:.2f})")
