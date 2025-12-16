@@ -27,7 +27,7 @@ import torch
 from utils import preprocesar_datos, split_data, evaluar_modelo_scikit, entrenar_evaluar_pytorch
 from modelos.mlp import MLP
 from modelos.mlp_mejorado import MLP_mejorado
-
+from modelos.lstm import LSTM_basico
 from plots import plot_confusion_matrix
 
 
@@ -110,10 +110,11 @@ def run():
     X_train, X_test, y_train, y_test = split_data(X, y, test_size/100)
 
     # Crear pestañas para los modelos
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab8 = st.tabs([
         "Modelos Shallow Learning",
         "MLP Básico",
-        "MLP Avanzado"
+        "MLP Avanzado",
+        "LSTM"
     ])
 
     # ----- TAB 1: Shallow Learning -----
@@ -321,3 +322,76 @@ def run():
             )
 
             mostrar_resultados_modelo(resultados_mlp, le)
+            
+            
+            
+            
+    # ----- TAB 8: LSTM -----
+    with tab8:
+        st.subheader("LSTM")
+        st.write("Selección de parámetros específicos:")
+        
+        epochs = st.slider("Número de epochs", 10, 200, 50, key="Epochs_LSTM")
+        batch_size = st.selectbox("Batch size", [16, 32, 64, 128], index=3, key="Batch_LSTM")
+        lr = st.number_input("Learning rate", min_value=0.0001, max_value=0.05, value=0.001, step=0.0001, key="LR_LSTM", format="%.4f")       
+        usar_class_weights = st.checkbox("Usar class weights", value=False, key="Class_weights_LSTM")
+        dropout = st.slider("Dropout", 0.0, 0.5, 0.1, key="Dropout_LSTM")
+        hidden_dim = st.number_input("Hidden dim", min_value=16, max_value=256, value=64, step=16, key="Hidden_LSTM")
+        num_layers = st.number_input("Número de capas LSTM", min_value=1, max_value=4, value=2, step=1, key="Layers_LSTM")
+        ventana = st.slider("Tamaño de la ventana (timesteps)", 10, 200, 50, step=5, key="Ventana_LSTM")
+        st.markdown("---")
+        
+        st.write("Parámetros seleccionados:")
+        st.write(f"- epochs: {epochs}")
+        st.write(f"- batch_size: {batch_size}")
+        st.write(f"- learning_rate: {lr:.4f}")
+        st.write(f"- usar_class_weights: {usar_class_weights}")
+        st.write(f"- Dropout: {dropout}")
+        st.write(f"- Tamaño del test: {test_size}%")
+        st.write(f"- Hidden dim: {hidden_dim}")
+        st.write(f"- Número de capas: {num_layers}")
+        st.write(f"- Ventana (timesteps): {ventana}")
+        
+        
+
+        st.markdown("---")
+        if st.button("Entrenar LSTM"):
+            col1, col2 = st.columns(2)
+
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            
+            # Crear secuencias para LSTM
+            X_train_seq, y_train_seq = crear_secuencias(X_train.values, y_train.values, ventana)
+            X_test_seq, y_test_seq = crear_secuencias(X_test.values, y_test.values, ventana)
+
+
+            input_dim = X_train_seq.shape[2]
+            output_dim = len(np.unique(y_train_seq))
+                        
+            model = LSTM_basico(
+                        input_dim=input_dim,
+                        hidden_dim=hidden_dim,
+                        num_layers=num_layers,
+                        output_dim=output_dim,
+                        dropout=dropout
+                    )
+            
+            class_weights = None
+            if usar_class_weights:
+                class_weights = compute_class_weight('balanced', classes=np.unique(y_train_seq), y=y_train_seq)
+
+            resultados_lstm = entrenar_evaluar_pytorch(
+                model=model,
+                X_train=X_train_seq,
+                X_test=X_test_seq,
+                y_train=y_train_seq,
+                y_test=y_test_seq,
+                le=le,
+                epochs=epochs,
+                batch_size=batch_size,
+                lr=lr,
+                device=device,
+                class_weights=class_weights
+            )
+
+            mostrar_resultados_modelo(resultados_lstm, le)

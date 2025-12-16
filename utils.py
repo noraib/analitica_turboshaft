@@ -1,3 +1,4 @@
+from IPython.display import display
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -13,6 +14,8 @@ from torch.utils.data import TensorDataset, DataLoader
 
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
+
+from modelos.ventana_lstm import SequenceDataset, collate_fn
 
 #----DETECCION OUTLIERS----#
 def calcular_outliers_iqr(df):
@@ -193,6 +196,57 @@ def evaluar_modelo_scikit(modelo, X_train, X_test, y_train, y_test, nombre_model
         'classes': le.classes_,
         'class_distribution': {clase: np.sum(y_test == i) for i, clase in enumerate(le.classes_)}
     }
+    
+def mostrar_resultados_notebook(resultados, le):
+    """Muestra los resultados de un modelo en un notebook con el layout especificado."""
+    import matplotlib.pyplot as plt
+    from plots import plot_confusion_matrix
+    
+    print("Resultados del Modelo")
+    print("---------------------")
+    
+    # Metricas globales
+    print(f"Accuracy: {resultados['accuracy']:.3f}")
+    print(f"Balanced Accuracy: {resultados['balanced_accuracy']:.3f}")
+    print(f"F1 Global: {resultados['f1_global']:.3f}")
+    print(f"Kappa: {resultados['kappa']:.3f}")
+    print(f"Muestras en test: {len(resultados['y_true'])}\n")
+    
+    # Metricas por clase
+    print("Métricas por Clase:")
+    metrics_data = []
+    for i, clase in enumerate(resultados['classes']):
+        metrics_data.append({
+            'Clase': clase,
+            'Precision': resultados['precision_por_clase'][i],
+            'Recall': resultados['recall_por_clase'][i],
+            'F1': resultados['f1_por_clase'][i],
+        })
+    
+    df_class_metrics = pd.DataFrame(metrics_data)
+    display(df_class_metrics.style.format({
+        'Precision': '{:.3f}',
+        'Recall': '{:.3f}',
+        'F1': '{:.3f}'
+    }))
+    
+    # Distribucion de clases
+    print("Distribución de clases en el conjunto de test:")
+    for clase, count in resultados['class_distribution'].items():
+        porcentaje = (count / len(resultados['y_true'])) * 100
+        print(f"  {clase}: {count} muestras ({porcentaje:.2f}%)")
+    
+    # Matriz de confusion
+    print("\nMatriz de Confusión:")
+    fig = plot_confusion_matrix(
+        y_true=resultados['y_true'],
+        y_pred=resultados['y_pred'],
+        class_names=le.classes_
+    )
+    plt.show()
+    
+    
+    
 
 def mostrar_resultados_modelo(resultados, le):
     """Muestra los resultados de un modelo en Streamlit con el layout especificado."""
@@ -225,7 +279,7 @@ def mostrar_resultados_modelo(resultados, le):
             st.caption(f"Muestras en test: {len(resultados['y_true'])}")
         
         with tab_clases:
-            # Métricas por clase
+            # Metricas por clase
             metrics_data = []
             for i, clase in enumerate(resultados['classes']):
                 metrics_data.append({
@@ -243,7 +297,7 @@ def mostrar_resultados_modelo(resultados, le):
             }))
         
         with tab_detalle:
-            # Información adicional sobre la distribución (desbalanceo)
+            # Informacion adicional sobre la distribucion (desbalanceo)
             st.write("**Distribución de clases:**")
             for clase, count in resultados['class_distribution'].items():
                 st.progress(count / len(resultados['y_true']), 
@@ -259,6 +313,8 @@ def mostrar_resultados_modelo(resultados, le):
         st.pyplot(fig)
     
     return col1, col2
+
+
 
 def entrenar_evaluar_pytorch(model, X_train, X_test, y_train, y_test, le,
                              epochs=50, batch_size=32, lr=0.001, device='cpu',
@@ -340,6 +396,156 @@ def entrenar_evaluar_pytorch(model, X_train, X_test, y_train, y_test, le,
     }
     
     return resultados
+
+
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.metrics import accuracy_score, f1_score, recall_score, precision_score, cohen_kappa_score, balanced_accuracy_score, confusion_matrix
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+
+
+def entrenar_evaluar_lstm(model, 
+                          X_train=None, X_test=None, 
+                          y_train=None, y_test=None, 
+                          le=None, 
+                          train_dataset=None, test_dataset=None,
+                          epochs=50, batch_size=32, lr=0.001, 
+                          device='cpu', class_weights=None, 
+                          ventana_variable=False, collate_fn=None,
+                          ventana=50):
+    """
+    Entrena y evalúa un modelo LSTM.
+
+    - ventana_variable=False: usa LSTM_basico y tensores 3D.
+    - ventana_variable=True: usa LSTMModel con pack_padded_sequence.
+    """
+
+    # --- 1. Crear DataLoaders ---
+    if ventana_variable:
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    else:
+        # Crear secuencias fijas
+        X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
+        X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
+
+        train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
+                                      torch.tensor(y_train_seq, dtype=torch.long))
+        test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
+                                     torch.tensor(y_test_seq, dtype=torch.long))
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size)
+
+    # --- 2. Preparar modelo y criterio ---
+    model = model.to(device)
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor(class_weights, dtype=torch.float32).to(device)) if class_weights is not None else nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # --- 3. Entrenamiento ---
+    model.train()
+    for epoch in range(epochs):
+        for batch in train_loader:
+            optimizer.zero_grad()
+            if ventana_variable:
+                xb, yb, lengths = batch
+                xb, yb = xb.to(device), yb.to(device)
+                outputs = model(xb, lengths)
+            else:
+                xb, yb = batch
+                xb, yb = xb.to(device), yb.to(device)
+                outputs = model(xb)
+
+            loss = criterion(outputs, yb)
+            loss.backward()
+            optimizer.step()
+
+    # --- 4. Evaluación ---
+    model.eval()
+    all_preds, all_true = [], []
+    with torch.no_grad():
+        for batch in test_loader:
+            if ventana_variable:
+                xb, yb, lengths = batch
+                xb, yb = xb.to(device), yb.to(device)
+                outputs = model(xb, lengths)
+            else:
+                xb, yb = batch
+                xb, yb = xb.to(device), yb.to(device)
+                outputs = model(xb)
+
+            preds = torch.argmax(outputs, dim=1).cpu().numpy()
+            all_preds.extend(preds)
+            all_true.extend(yb.cpu().numpy())
+
+    # --- 5. Métricas ---
+    all_true = np.array(all_true)
+    all_preds = np.array(all_preds)
+
+    resultados = {
+        'accuracy': accuracy_score(all_true, all_preds),
+        'balanced_accuracy': balanced_accuracy_score(all_true, all_preds),
+        'f1_global': f1_score(all_true, all_preds, average='weighted'),
+        'f1_por_clase': f1_score(all_true, all_preds, average=None),
+        'recall_por_clase': recall_score(all_true, all_preds, average=None),
+        'precision_por_clase': precision_score(all_true, all_preds, average=None),
+        'kappa': cohen_kappa_score(all_true, all_preds),
+        'y_true': all_true,
+        'y_pred': all_preds,
+        'model': model,
+        'classes': le.classes_,
+        'class_distribution': {clase: np.sum(all_true == i) for i, clase in enumerate(le.classes_)},
+        'confusion_matrix': confusion_matrix(all_true, all_preds),
+        'ventana_usada': ventana,
+        'ventana_variable': ventana_variable
+    }
+
+    return resultados
+
+
+
+
+
+
+#----EXTRAS LSTM----#
+def crear_secuencias(X, y, ventana):
+    X_seq, y_seq = [], []
+    
+    for i in range(len(X) - ventana):
+        # Para cada posicion, tomar una secuencia de longitud de la ventana
+        X_seq.append(X[i:i+ventana])
+        y_seq.append(y[i+ventana-1])  # Etiqueta del ultimo paso
+    return np.array(X_seq), np.array(y_seq)
+
+
+
+def crear_dataloaders_ventana(X_train, y_train, X_test, y_test, batch_size=64, ventana=50, ventana_variable=False):
+    """
+    Crea DataLoaders para LSTM con ventana fija o variable (padding).
+    """
+    if ventana_variable:
+        # Secuencias con longitud variable usando collate_fn
+        train_dataset = SequenceDataset(X_train, y_train)
+        test_dataset = SequenceDataset(X_test, y_test)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+        return train_loader, test_loader, None, None, None, None
+
+    else:
+        # Secuencias fijas
+        X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
+        X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
+        train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
+                                      torch.tensor(y_train_seq, dtype=torch.long))
+        test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
+                                     torch.tensor(y_test_seq, dtype=torch.long))
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size)
+
+        return train_loader, test_loader, X_train_seq, X_test_seq, y_train_seq, y_test_seq
 
 
 
