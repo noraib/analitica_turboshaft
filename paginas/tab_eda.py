@@ -23,10 +23,48 @@ def run():
         st.warning("Los datos no se han cargado. Ve a la pestaña 'Contexto' y verifica la carga.")
     else:
         df = st.session_state['df']
-        st.success(f"Analizando dataset con {df.shape[0]} registros")
+        
+        # Filtro de fechas en sidebar (solo para este tab)
+        if 'Timestamp' in df.columns:
+            st.sidebar.subheader("Filtro Temporal")
             
-        if 'Fault_Label_Encoded' in df.columns:
-                df = df.drop("Fault_Label_Encoded", axis=1)
+            # Convertir a datetime si no lo está
+            if not pd.api.types.is_datetime64_any_dtype(df['Timestamp']):
+                df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+            
+            # Obtener fechas mínimas y máximas
+            min_date = df['Timestamp'].min()
+            max_date = df['Timestamp'].max()
+            
+            # Widget de selección de rango de fechas
+            selected_dates = st.sidebar.date_input(
+                "Selecciona el intervalo de fechas:",
+                value=(min_date.date(), max_date.date()),
+                min_value=min_date.date(),
+                max_value=max_date.date()
+            )
+            
+            # Aplicar filtro si se seleccionaron dos fechas
+            if len(selected_dates) == 2:
+                start_date, end_date = selected_dates
+                start_datetime = pd.Timestamp(start_date)
+                end_datetime = pd.Timestamp(end_date)
+                
+                # Filtrar el dataframe
+                df_filtered = df[(df['Timestamp'] >= start_datetime) & 
+                                (df['Timestamp'] <= end_datetime)]
+                st.sidebar.success(f"Filtrado: {len(df_filtered)} registros de {start_date} a {end_date}")
+            else:
+                df_filtered = df
+                st.sidebar.info("Selecciona un intervalo de fechas válido (inicio y fin)")
+        else:
+            df_filtered = df
+            st.sidebar.info("No hay columna de fechas disponible para filtrar")
+        
+        st.success(f"Analizando dataset con {df_filtered.shape[0]} registros")
+            
+        if 'Fault_Label_Encoded' in df_filtered.columns:
+                df_filtered = df_filtered.drop("Fault_Label_Encoded", axis=1)
         #Opciones
         opcion_analisis = st.selectbox(
             "Selecciona tipo de análisis:",
@@ -45,62 +83,15 @@ def run():
         #----Estadisticas Descriptivas----#
         if opcion_analisis == "📊 Estadísticas Descriptivas":
             st.subheader("Estadísticas Descriptivas")
-            st.dataframe(df.describe())
+            st.dataframe(df_filtered.describe())
             
-            # # Mostrar información de tipos de fallo si existe
-            # if 'Fault_Label' in df.columns:
-            #     st.subheader("Distribución de Fallos")
-            #     fault_counts = df['Fault_Label'].value_counts()
-                
-            #     col1, col2 = st.columns(2)
-            #     with col1:
-            #         st.write("Conteo por clase:")
-            #         st.dataframe(fault_counts)
-                
-            #     with col2:
-            #         # Gráfico de barras
-            #         fig, ax = plt.subplots(figsize=(10, 5))
-            #         bars = ax.bar(fault_counts.index, fault_counts.values, color='skyblue')
-            #         ax.set_title('Distribución de Tipos de Fallo')
-            #         ax.set_xlabel('Tipo de Fallo')
-            #         ax.set_ylabel('Cantidad')
-            #         ax.tick_params(axis='x', rotation=45)
-                    
-            #         for bar in bars:
-            #             height = bar.get_height()
-            #             ax.text(bar.get_x() + bar.get_width()/2., height + 10,
-            #                    f'{int(height)}', ha='center', va='bottom')
-                    
-            #         st.pyplot(fig)
-
-            #     st.subheader("Parallel Coordinates por Tipo de Fallo")
-            #     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-
-            #     le = LabelEncoder()
-            #     df["Fault_Code"] = le.fit_transform(df["Fault_Label"])
-
-            #     fig = px.parallel_coordinates(
-            #         df,
-            #         dimensions=numeric_cols,
-            #         color="Fault_Code",
-            #         labels={col: col for col in numeric_cols},
-            #         title="Parallel coordinates por tipo de tallo",
-            #         color_continuous_scale=px.colors.diverging.Tealrose,
-            #     )
-
-            #     st.plotly_chart(fig, use_container_width=True)
-
-
-
-
-
         #----Distribuciones----#
         elif opcion_analisis == "📈 Distribuciones":
             st.subheader("Análisis de Distribuciones y Outliers")
             
             st.write("Selecciona variables para visualizar su distribución:")
             #Seleccionar columnas numericas
-            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            numeric_cols = df_filtered.select_dtypes(include=[np.number]).columns.tolist()
             
             if numeric_cols:
                 selected_cols = st.multiselect(
@@ -109,47 +100,15 @@ def run():
                 )
 
             if len(selected_cols) == 0:
-                resultados_df = generar_df_estadisticas_outliers(df[numeric_cols])
+                resultados_df = generar_df_estadisticas_outliers(df_filtered[numeric_cols])
                 st.info("No has seleccionado ninguna variable. Se mostrarán todas las distribuciones.")
             else:
-                resultados_df = generar_df_estadisticas_outliers(df[selected_cols])
+                resultados_df = generar_df_estadisticas_outliers(df_filtered[selected_cols])
   
-            fig = plot_distribuciones_outliers(df, resultados_df)
+            fig = plot_distribuciones_outliers(df_filtered, resultados_df)
             #Mostrar en app
             plt.tight_layout()
             st.pyplot(fig)
-
-
-                # for col in selected_cols:
-                #     data = df[col].dropna()
-                #     kde = gaussian_kde(data)
-
-                #     x_vals = np.linspace(data.min(), data.max(), 300)
-                #     y_vals = kde(x_vals)
-
-                #     fig = go.Figure()
-
-                #     fig.add_trace(go.Scatter(
-                #         x=x_vals,
-                #         y=y_vals,
-                #         mode="lines",
-                #         fill="tozeroy",
-                #         line=dict(color="royalblue", width=3),
-                #         name=col
-                #     ))
-
-                #     fig.update_layout(
-                #         title=f"Distribución de {col}",
-                #         xaxis_title=col,
-                #         yaxis_title="Densidad",
-                #         height=400,
-                #         template="simple_white",
-                #         margin=dict(l=50, r=50, t=60, b=50)
-                #     )
-
-                #     st.plotly_chart(fig, use_container_width=True)
-
-
 
 
         #----Correlaciones----#
@@ -157,7 +116,7 @@ def run():
             st.subheader("🔗 Matriz de Correlación")
 
             #Seleccionar columnas numericas
-            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            numeric_cols = df_filtered.select_dtypes(include=[np.number]).columns.tolist()
 
             st.write("Selecciona columnas para incluir en la matriz:")
             if numeric_cols:
@@ -167,43 +126,16 @@ def run():
                 )
 
             if len(selected_corr_cols) == 0:
-                corr_matrix = calculo_matriz_correlacion(df, numeric_cols)
-                # corr_df = df[numeric_cols].corr()
+                corr_matrix = calculo_matriz_correlacion(df_filtered, numeric_cols)
+                # corr_df = df_filtered[numeric_cols].corr()
                 st.info("No has seleccionado ninguna columna. Se mostrará la matriz completa.")
             else:
-                corr_matrix = df[selected_corr_cols].corr()
+                corr_matrix = df_filtered[selected_corr_cols].corr()
   
             fig = plot_correlacion_heatmap(corr_matrix)
             #Mostrar en app
             plt.tight_layout()
             st.pyplot(fig)
-
-            # else:
-            #     corr_df = df[selected_corr_cols].corr()
-
-            # fig = px.imshow(
-            #     corr_df,
-            #     text_auto=".2f",
-            #     color_continuous_scale="RdBu",
-            #     zmin=-1, #para que ese entre 1 y -1
-            #     zmax=1,
-            #     aspect="auto",
-            #     title="Matriz de correlación"
-            # )
-
-            # fig.update_layout(
-            #     height=800 if len(corr_df.columns) > 6 else 600,
-            #     margin=dict(l=40, r=40, t=60, b=40),
-            #     coloraxis_colorbar=dict(
-            #         title="Correlación",
-            #         ticks="outside"
-            #     )
-            # )
-
-            # st.plotly_chart(fig, use_container_width=True)
-        
-
-
 
 
         #----Analisis de fallos----#
@@ -217,24 +149,23 @@ def run():
             with tab4:
                 col1, col2, col3 = st.columns([1, 1, 1])
                 with col2:
-                    df["fallo"] = np.where(df["Fault_Label"] == "Normal", "Normal", "Fallos")
-                    fig = pie_chart(df, "fallo", paleta = ["#3f7afa", "#ff5e5e"], titulo="Distribucion: Normal vs Fallos")            
+                    df_filtered["fallo"] = np.where(df_filtered["Fault_Label"] == "Normal", "Normal", "Fallos")
+                    fig = pie_chart(df_filtered, "fallo", paleta = ["#3f7afa", "#ff5e5e"], titulo="Distribucion: Normal vs Fallos")            
                     st.pyplot(fig)
 
             with tab5: 
                 col1, col2, col3 = st.columns([1, 2, 1])
                 with col2:   
-                    paleta = definicion_paleta(df, "Fault_Label")
-                    fig = bar_chart(df, "Fault_Label", paleta, "Distribucion de Tipos de Fallo", "Cantidad", "Tipo de Fallo")
+                    paleta = definicion_paleta(df_filtered, "Fault_Label")
+                    fig = bar_chart(df_filtered, "Fault_Label", paleta, "Distribucion de Tipos de Fallo", "Cantidad", "Tipo de Fallo")
                     st.pyplot(fig)
 
             with tab6:
                 col1, col2, col3 = st.columns([1, 1, 1])
                 with col2:
-                    df_fallos = df[df['Fault_Label'] != 'Normal']
+                    df_fallos = df_filtered[df_filtered['Fault_Label'] != 'Normal']
                     fig = pie_chart(df_fallos, "Fault_Label", titulo="Distribucion de Tipos de Fallos")
                     st.pyplot(fig)
-
 
 
 
@@ -246,12 +177,12 @@ def run():
             st.write("Selecciona sensores y fallos a analizar:")
 
             # Sensores disponibles
-            sensores_disponibles = df.select_dtypes(include=[np.number]).columns.tolist()
+            sensores_disponibles = df_filtered.select_dtypes(include=[np.number]).columns.tolist()
             if len(sensores_disponibles) == 0:
                 st.warning("No hay datos de sensores para analizar.")
 
             # Fallos disponibles sin Normal
-            fallos_disponibles = df['Fault_Label'].unique().tolist()
+            fallos_disponibles = df_filtered['Fault_Label'].unique().tolist()
             if len(fallos_disponibles) == 0:
                 st.warning("No hay fallos para analizar.")
 
@@ -285,7 +216,7 @@ def run():
             with tab7:
                 col1, col2, col3 = st.columns([1, 2, 1])
                 with col2:
-                    median_matrix = calcular_medianas_por_fallo(df, fallos_seleccionados, sensores_seleccionados)
+                    median_matrix = calcular_medianas_por_fallo(df_filtered, fallos_seleccionados, sensores_seleccionados)
                     fig = plot_heatmap_medianas(median_matrix)
                     plt.tight_layout()
                     st.pyplot(fig)
@@ -296,21 +227,21 @@ def run():
 
                 if len(fallos_seleccionados) > 0 and len(sensores_seleccionados) == 0:
                     #Solo fallos seleccionados --> todos los sensores
-                    df_filtrado = df[df['Fault_Label'].isin(fallos_seleccionados)]
+                    df_filtrado = df_filtered[df_filtered['Fault_Label'].isin(fallos_seleccionados)]
                     sensores_a_graficar = [col for col in df_filtrado.select_dtypes(include='number').columns if col != 'Fault_Label']
                     fallos_a_graficar = fallos_seleccionados
 
                 elif len(fallos_seleccionados) == 0 and len(sensores_seleccionados) > 0:
                     #Solo sensores seleccionados --> todos los fallos
-                    sensores_existentes = [s for s in sensores_seleccionados if s in df.columns]
-                    df_filtrado = df[sensores_existentes + ['Fault_Label']]
+                    sensores_existentes = [s for s in sensores_seleccionados if s in df_filtered.columns]
+                    df_filtrado = df_filtered[sensores_existentes + ['Fault_Label']]
                     sensores_a_graficar = sensores_existentes
-                    fallos_a_graficar = df['Fault_Label'].unique().tolist()
+                    fallos_a_graficar = df_filtered['Fault_Label'].unique().tolist()
     
                 else:
                     #Ambos seleccionados o ninguno
-                    sensores_existentes = [s for s in sensores_seleccionados if s in df.columns]
-                    df_filtrado = df[df['Fault_Label'].isin(fallos_seleccionados)][sensores_existentes + ['Fault_Label']]
+                    sensores_existentes = [s for s in sensores_seleccionados if s in df_filtered.columns]
+                    df_filtrado = df_filtered[df_filtered['Fault_Label'].isin(fallos_seleccionados)][sensores_existentes + ['Fault_Label']]
                     sensores_a_graficar = sensores_existentes
                     fallos_a_graficar = fallos_seleccionados
 
@@ -328,10 +259,10 @@ def run():
 
                     with col2:
                         # Sensores a graficar
-                        sensores_a_graficar = sensores_seleccionados if len(sensores_seleccionados) > 0 else [col for col in df.select_dtypes(include='number').columns if col != 'Fault_Label']
+                        sensores_a_graficar = sensores_seleccionados if len(sensores_seleccionados) > 0 else [col for col in df_filtered.select_dtypes(include='number').columns if col != 'Fault_Label']
 
                         # Filtrar df
-                        df_filtrado = df[df['Fault_Label'].isin(fallos_a_graficar)]
+                        df_filtrado = df_filtered[df_filtered['Fault_Label'].isin(fallos_a_graficar)]
 
                         # Calcular medianas
                         median_matrix = calcular_medianas_por_fallo(df_filtrado, fallos_a_graficar, sensores_a_graficar)
@@ -351,7 +282,7 @@ def run():
 
             with col1:
                 fallos_disponibles = []
-                for f in df['Fault_Label'].unique():
+                for f in df_filtered['Fault_Label'].unique():
                     if f != "Normal":
                         fallos_disponibles.append(f)
 
@@ -391,7 +322,7 @@ def run():
                         max_value=10,
                         )
                     fig, ejemplos_turbine = timeline_por_tipo_fallo(
-                        df,
+                        df_filtered,
                         sensores_seleccionados,
                         fallo_timeline,
                         n_ejemplos=n_ejemplos
@@ -404,9 +335,8 @@ def run():
                 #---Tab 11: Cambio sensores---#
                 with tab11:
                     plt.tight_layout()
-                    fig = plot_cambio_5h(df, sensores_seleccionados)
+                    fig = plot_cambio_5h(df_filtered, sensores_seleccionados)
                     st.pyplot(fig)
-
 
 
 
@@ -417,15 +347,15 @@ def run():
         elif opcion_analisis == "⌚️ Tendencia temporal":
             st.subheader("⌚️ Tendencias temporales (Time-Series)")
 
-            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            numeric_cols = df_filtered.select_dtypes(include=[np.number]).columns.tolist()
 
             col = st.selectbox("Selecciona una variable para analizar su evolución temporal:", numeric_cols)
 
             fig = go.Figure()
 
             fig.add_trace(go.Scatter(
-                x=df.index,
-                y=df[col],
+                x=df_filtered.index,
+                y=df_filtered[col],
                 mode="lines",
                 line=dict(color="royalblue", width=2),
                 name=col
@@ -441,37 +371,15 @@ def run():
 
             st.plotly_chart(fig, use_container_width=True)
 
-        # elif opcion_analisis == "📡 Radar por fallo":
-        #     st.subheader("📡 Radar chart por tipo de fallo")
-
-        #     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-
-        #     col = st.selectbox("Selecciona una variable numérica:", numeric_cols)
-
-        #     avg = df.groupby("Fault_Label")[col].mean().reset_index()
-
-        #     fig = px.line_polar(
-        #         avg,
-        #         r=col,
-        #         theta="Fault_Label",
-        #         line_close=True,
-        #         title=f"Radar Chart de {col} por Tipo de Fallo",
-        #         range_r=[avg[col].min(), avg[col].max()],
-        #         template="simple_white"
-        #     )
-
-        #     fig.update_traces(fill="toself", line=dict(width=3))
-
-        #     st.plotly_chart(fig, use_container_width=True)
 
         elif opcion_analisis == "🧭 PCA":
             st.subheader("🧭 PCA de los 3 principales componentes")
 
-            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            numeric_cols = df_filtered.select_dtypes(include=[np.number]).columns.tolist()
             clean_numeric = [c for c in numeric_cols if c not in ["Fault_Code"]]
 
-            X = df[clean_numeric].dropna()
-            y = df["Fault_Label"]
+            X = df_filtered[clean_numeric].dropna()
+            y = df_filtered["Fault_Label"]
 
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(X)

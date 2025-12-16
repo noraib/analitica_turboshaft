@@ -35,44 +35,78 @@ from plots import plot_confusion_matrix
 from utils import *
 from modelos.mlp import MLP
 
-
-def run():
-    st.header("🤖 Modelado de machine learning")
-    
-    #Cargar datos de la sesion
-    df = st.session_state['df']
-    
-    #Configuracion interactiva
-    st.sidebar.subheader("Parámetros de entrenamiento")
-    
-    #TEST SIZE
-    test_size = st.sidebar.slider("Tamaño del test (%)", 10, 30, 10)
-
-    
-    X, y, le = preprocesar_datos(df)
-    X_train, X_test, y_train, y_test = split_data(X, y, test_size/100)
-    
-    tab1, tab2, tab3 = st.tabs([
-        "Modelos Shallow Learning",
-        "MLP Básico",
-        "MLP Avanzado"
-    ])
-    
-
-
 def run():
     st.header("🤖 Modelado de Machine Learning")
 
     # Cargar datos desde sesión
     df = st.session_state['df']
+    
+    # Filtro de fechas en sidebar (solo para este tab)
+    if 'Timestamp' in df.columns:
+        st.sidebar.subheader("Filtro Temporal")
+        
+        # Convertir a datetime si no lo está
+        if not pd.api.types.is_datetime64_any_dtype(df['Timestamp']):
+            df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+        
+        # Obtener fechas mínimas y máximas
+        min_date = df['Timestamp'].min()
+        max_date = df['Timestamp'].max()
+        
+        # Widget de selección de rango de fechas
+        selected_dates = st.sidebar.date_input(
+            "Selecciona el intervalo de fechas:",
+            value=(min_date.date(), max_date.date()),
+            min_value=min_date.date(),
+            max_value=max_date.date()
+        )
+        
+        # Aplicar filtro si se seleccionaron dos fechas
+        if len(selected_dates) == 2:
+            start_date, end_date = selected_dates
+            start_datetime = pd.Timestamp(start_date)
+            end_datetime = pd.Timestamp(end_date)
+            
+            # Calcular diferencia en días
+            dias_diferencia = (end_datetime - start_datetime).days + 1  # +1 para incluir ambos extremos
+            
+            # Validar intervalo mínimo de 7 días
+            if dias_diferencia < 7:
+                st.sidebar.error(f"Intervalo insuficiente: {dias_diferencia} días. Se requiere al menos 7 días de datos para entrenar modelos.")
+                st.sidebar.info(f"Selecciona un intervalo de al menos 7 días.")
+                
+                # Mostrar dataset completo como fallback
+                df_filtered = df
+                st.sidebar.warning("Usando dataset completo por intervalo insuficiente")
+            else:
+                # Filtrar el dataframe
+                df_filtered = df[(df['Timestamp'] >= start_datetime) & 
+                                (df['Timestamp'] <= end_datetime)]
+                st.sidebar.success(f"Intervalo válido: {dias_diferencia} días")
+                st.sidebar.success(f"Filtrado: {len(df_filtered)} registros de {start_date} a {end_date}")
+                
+        else:
+            df_filtered = df
+            st.sidebar.info("Selecciona un intervalo de fechas válido (inicio y fin)")
+    else:
+        df_filtered = df
+        st.sidebar.info("No hay columna de fechas disponible para filtrar")
 
     # Parámetros interactivos
     st.sidebar.subheader("Parámetros de entrenamiento")
     test_size = st.sidebar.slider("Tamaño del test (%)", 10, 30, 20)
     
+    # Eliminar encoder viejo porque puede que hayan cambiado las dimensiones
+    if 'le' in st.session_state:
+        del st.session_state['le']
+    
+    
 
     # Preprocesamiento y split
-    X, y, le = preprocesar_datos(df)
+    X, y, le = preprocesar_datos(df_filtered)
+    # Guardar el nuevo encoder
+    st.session_state['le'] = le
+    
     X_train, X_test, y_train, y_test = split_data(X, y, test_size/100)
 
     # Crear pestañas para los modelos
@@ -115,20 +149,7 @@ def run():
 
                 rf_model = RandomForestClassifier(n_estimators=10, random_state=111, class_weight='balanced')
                 resultados_rf = evaluar_modelo_scikit(rf_model, X_train, X_test, y_train, y_test, "Random Forest", le)
-
-                with col1:
-                    st.subheader("Métricas principales")
-                    #Solo las que muestren numero concreto
-                    metrics = {k: [v] for k, v in resultados_rf.items() if isinstance(v, (int, float))}
-                    df_metrics = pd.DataFrame.from_dict(metrics, orient='index', columns=["Valor"])
-                    st.dataframe(df_metrics)
-                with col2:
-                    st.subheader("Matríz de Confusión")
-                    fig = plot_confusion_matrix(y_true=resultados_rf['y_true'],
-                                y_pred=resultados_rf['y_pred'],
-                                class_names=le.classes_)
-                    st.pyplot(fig)
-
+                mostrar_resultados_modelo(resultados_rf, le)
                 
         with tab5:
             st.subheader("Gradient Boosting")
@@ -154,21 +175,7 @@ def run():
                 
                 gb_model = HistGradientBoostingClassifier(max_iter=100, random_state=111, class_weight='balanced')
                 resultados_gb = evaluar_modelo_scikit(gb_model, X_train, X_test, y_train, y_test, "HistGradientBoosting", le)
-                
-                with col1:
-                    st.subheader("Métricas principales")
-                    metrics = {k: [v] for k, v in resultados_gb.items() if isinstance(v, (int, float))}
-                    df_metrics = pd.DataFrame.from_dict(metrics, orient='index', columns=["Valor"])
-                    st.dataframe(df_metrics)
-
-                with col2:
-                    st.subheader("Matríz de Confusión")
-                    fig = plot_confusion_matrix(y_true=resultados_gb['y_true'],
-                                y_pred=resultados_gb['y_pred'],
-                                class_names=le.classes_)
-                    st.pyplot(fig)
-             
-             
+                mostrar_resultados_modelo(resultados_gb, le)           
                 
         with tab6:
             st.subheader("XGBoost")
@@ -195,20 +202,7 @@ def run():
 
                 xgb_model = XGBClassifier(n_estimators=100, random_state=111, use_label_encoder=False, eval_metric='mlogloss', scale_pos_weight=ratio)
                 resultados_xgb = evaluar_modelo_scikit(xgb_model, X_train, X_test, y_train, y_test, "XGBoost", le)
-            
-                with col1:
-                    st.subheader("Métricas principales")
-                    metrics = {k: [v] for k, v in resultados_xgb.items() if isinstance(v, (int, float))}
-                    df_metrics = pd.DataFrame.from_dict(metrics, orient='index', columns=["Valor"])
-                    st.dataframe(df_metrics)
-
-                with col2:
-                    st.subheader("Matríz de Confusión")
-                    fig = plot_confusion_matrix(y_true=resultados_xgb['y_true'],
-                                y_pred=resultados_xgb['y_pred'],
-                                class_names=le.classes_)
-                    st.pyplot(fig)
-                    
+                mostrar_resultados_modelo(resultados_xgb, le)
                 
         with tab7:
             st.subheader("Support Vector Machine (SVM)")
@@ -234,21 +228,7 @@ def run():
                 col1, col2 = st.columns(2)
                 svm_model = SVC(kernel='rbf', probability=True, random_state=111, class_weight='balanced')
                 resultados_svm = evaluar_modelo_scikit(svm_model, X_train, X_test, y_train, y_test, "SVM", le)                
-                
-                with col1:
-                    st.subheader("Métricas principales")
-                    st.dataframe(resultados_svm)
-
-                with col2:
-                    st.subheader("Matríz de Confusión")
-                    fig = plot_confusion_matrix(y_true=resultados_svm['y_true'],
-                                y_pred=resultados_svm['y_pred'],
-                                class_names=le.classes_)
-                    st.pyplot(fig)
-                    
-
-              
-
+                mostrar_resultados_modelo(resultados_svm, le)
 
 
     # ----- TAB 2: MLP Básico -----
@@ -289,18 +269,7 @@ def run():
                 device=device
             )
 
-            with col1:
-                st.subheader("Métricas principales")
-                metrics = {k: [v] for k, v in resultados_mlp.items() if isinstance(v, (int, float))}
-                df_metrics = pd.DataFrame.from_dict(metrics, orient='index', columns=["Valor"])
-                st.dataframe(df_metrics)
-
-            with col2:
-                st.subheader("Matríz de Confusión")
-                fig = plot_confusion_matrix(y_true=resultados_mlp['y_true'],
-                            y_pred=resultados_mlp['y_pred'],
-                            class_names=le.classes_)
-                st.pyplot(fig)
+            mostrar_resultados_modelo(resultados_mlp, le)
                     
            
 
@@ -351,100 +320,4 @@ def run():
                 class_weights=class_weights
             )
 
-            with col1:
-                st.subheader("Métricas principales")
-                metrics = {k: [v] for k, v in resultados_mlp.items() if isinstance(v, (int, float))}
-                df_metrics = pd.DataFrame.from_dict(metrics, orient='index', columns=["Valor"])
-                st.dataframe(df_metrics)
-
-            with col2:
-                st.subheader("Matríz de Confusión")
-                fig = plot_confusion_matrix(y_true=resultados_mlp['y_true'],
-                            y_pred=resultados_mlp['y_pred'],
-                            class_names=le.classes_)
-                st.pyplot(fig)
-
-
-
-
-# def run():
-#     st.header("🤖 Modelado de machine learning")
-#     st.write("En esta sección podrás entrenar y evaluar diferentes modelos de clasificación para detectar fallos en motores turboshaft.")
-
-#     st.markdown("---")
-
-#     target_col = "Fault_Label"
-
-#     if target_col not in df.columns:
-#         st.error("No se encontró la columna Fault_Label en el dataset.")
-#         st.stop()
-
-#     default_features = [c for c in df.columns if c != target_col]
-
-#     st.subheader("Variables predictoras (X)")
-#     feature_cols = st.multiselect(
-#         "Selecciona las variables de entrada para el modelo:",
-#         df.columns,
-#         default=default_features
-#     )
-
-#     st.markdown("---")
-
-
-#     col_left, col_right = st.columns([1, 1])
-
-#     with col_left:
-#         st.subheader("Modelos disponibles")
-#         model_options = [
-#            "Logistic Regression",
-#             "Support Vector Machine (SVM)",
-#             "Random Forest",
-#             "Gradient Boosting",
-#             "XGBoost",
-#             "Red Neuronal (MLP - Keras)"
-#         ]
-
-#         selected_models = st.multiselect(
-#             "Selecciona uno o varios modelos para entrenar:",
-#             model_options,
-#             default=["Random Forest"]
-#         )
-
-#     with col_right:
-#         st.subheader("Parámetros del conjunto de entrenamiento")
-#         test_size = st.slider(
-#             "Tamaño del conjunto de test (%):",
-#             min_value=10, max_value=50, value=20, step=5
-#         )
-
-#     st.markdown("---")
-
-#     run_button = st.button("🚀 Entrenar Modelos")
-
-#     if run_button:
-#         st.subheader("Resultados del entrenamiento")
-
-#         for model_name in selected_models:
-#             st.write(f"## 🔽 Resultados para **{model_name}**")
-                
-#             col1, col2, col3 = st.columns(3)
-#             with col1:
-#                 st.metric("Accuracy", "—")
-#             with col2:
-#                 st.metric("F1-Score", "—")
-#             with col3:
-#                 st.metric("Muestras en test", f"{test_size}%")
-
-#             st.write("### Matriz de Confusión:")
-#             st.empty()
-
-#             if model_name in ["Random Forest", "Gradient Boosting", "XGBoost"]:
-#                 st.write("### Importancia de Variables:")
-#                 st.empty()
-
-#             st.write("### Predicciones de ejemplo:")
-#             st.dataframe(df[feature_cols].head().assign(Predicción="—"))
-        
-#             st.markdown("---")
-
-
+            mostrar_resultados_modelo(resultados_mlp, le)

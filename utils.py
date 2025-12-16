@@ -3,7 +3,7 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report,recall_score, precision_score, cohen_kappa_score, balanced_accuracy_score, matthews_corrcoef, roc_auc_score
 from sklearn.utils.class_weight import compute_class_weight
 
 import torch
@@ -158,36 +158,107 @@ def evaluar_modelo_scikit(modelo, X_train, X_test, y_train, y_test, nombre_model
     y_pred = modelo.predict(X_test)
     y_pred_proba = modelo.predict_proba(X_test) if hasattr(modelo, "predict_proba") else None
     
-    # Métricas
+    # Métricas globales
     acc = accuracy_score(y_test, y_pred)
     f1_global = f1_score(y_test, y_pred, average='weighted')
+    
+    # Métricas por clase 
     f1_por_clase = f1_score(y_test, y_pred, average=None)
+    recall_por_clase = recall_score(y_test, y_pred, average=None)
+    precision_por_clase = precision_score(y_test, y_pred, average=None)
     
-    # Mostrar resultados
-    print(f"\n--- {nombre_modelo} ---")
-    print(f"Accuracy: {acc:.4f}")
-    print(f"F1-Score (global, weighted): {f1_global:.4f}")
-    print("\nF1-Score por clase:")
-    for i, clase in enumerate(le.classes_):
-        print(f"{clase}: {f1_por_clase[i]:.4f}")
+    # Matriz de confusión
+    cm = confusion_matrix(y_test, y_pred)
     
-    print("\nMatriz de Confusión:")
-    print(confusion_matrix(y_test, y_pred))
+    # Métricas extra pa desbalanceo
+    # Cohen's Kappa (mejor que accuracy pa desbalanceo)
+    kappa = cohen_kappa_score(y_test, y_pred)
     
-    print("\nReporte de Clasificación:")
-    print(classification_report(y_test, y_pred, target_names=le.classes_))
+    # Balanced Accuracy (promedio de recall por clase)
+    balanced_acc = balanced_accuracy_score(y_test, y_pred)
     
     return {
         'modelo': modelo,
         'accuracy': acc,
+        'balanced_accuracy': balanced_acc,
         'f1_global': f1_global,
         'f1_por_clase': f1_por_clase,
+        'recall_por_clase': recall_por_clase,
+        'precision_por_clase': precision_por_clase,
+        'kappa': kappa,
         'y_true': y_test,       
         'y_pred': y_pred,
-        'y_pred_proba': y_pred_proba
+        'y_pred_proba': y_pred_proba,
+        'confusion_matrix': cm,
+        'classes': le.classes_,
+        'class_distribution': {clase: np.sum(y_test == i) for i, clase in enumerate(le.classes_)}
     }
 
-
+def mostrar_resultados_modelo(resultados, le):
+    """Muestra los resultados de un modelo en Streamlit con el layout especificado."""
+    import streamlit as st
+    import pandas as pd
+    from plots import plot_confusion_matrix
+    
+    # Crear dos columnas
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Resultados del Modelo")
+        
+        # Pestañas para organizar
+        tab_global, tab_clases, tab_detalle = st.tabs(["Global", "Por Clase", "Detalle"])
+        
+        with tab_global:
+            # Métricas globales
+            g1, g2, g3, g4 = st.columns(4)
+            with g1:
+                st.metric("Accuracy", f"{resultados['accuracy']:.3f}")
+            with g2:
+                st.metric("Balanced Acc", f"{resultados['balanced_accuracy']:.3f}")
+            with g3:
+                st.metric("F1 Global", f"{resultados['f1_global']:.3f}")
+            with g4:
+                st.metric("Kappa", f"{resultados['kappa']:.3f}")
+            
+            # Distribución
+            st.caption(f"Muestras en test: {len(resultados['y_true'])}")
+        
+        with tab_clases:
+            # Métricas por clase
+            metrics_data = []
+            for i, clase in enumerate(resultados['classes']):
+                metrics_data.append({
+                    'Clase': clase,
+                    'Precision': resultados['precision_por_clase'][i],
+                    'Recall': resultados['recall_por_clase'][i],
+                    'F1': resultados['f1_por_clase'][i],
+                })
+            
+            df_class_metrics = pd.DataFrame(metrics_data)
+            st.dataframe(df_class_metrics.style.format({
+                'Precision': '{:.3f}',
+                'Recall': '{:.3f}',
+                'F1': '{:.3f}'
+            }))
+        
+        with tab_detalle:
+            # Información adicional sobre la distribución (desbalanceo)
+            st.write("**Distribución de clases:**")
+            for clase, count in resultados['class_distribution'].items():
+                st.progress(count / len(resultados['y_true']), 
+                          text=f"{clase}: {count} muestras")
+    
+    with col2:
+        st.subheader("Matríz de Confusión")
+        fig = plot_confusion_matrix(
+            y_true=resultados['y_true'],
+            y_pred=resultados['y_pred'],
+            class_names=le.classes_
+        )
+        st.pyplot(fig)
+    
+    return col1, col2
 
 def entrenar_evaluar_pytorch(model, X_train, X_test, y_train, y_test, le,
                              epochs=50, batch_size=32, lr=0.001, device='cpu',
@@ -246,31 +317,29 @@ def entrenar_evaluar_pytorch(model, X_train, X_test, y_train, y_test, le,
     acc = accuracy_score(all_true, all_preds)
     f1_global = f1_score(all_true, all_preds, average='weighted')
     f1_por_clase = f1_score(all_true, all_preds, average=None)
-    
+    recall_por_clase = recall_score(all_true, all_preds, average=None)  
+    precision_por_clase = precision_score(all_true, all_preds, average=None)  
+    kappa = cohen_kappa_score(all_true, all_preds)  
+    balanced_acc = balanced_accuracy_score(all_true, all_preds)  
+
     #Mostrar resultados
-    print("\n--- Resultados del Modelo ---")
-    print("Accuracy:", acc)
-    print("F1-score (weighted):", f1_global)
-    print("F1-score por clase:")
-    for i, clase in enumerate(le.classes_):
-        print(f"{clase}: {f1_por_clase[i]:.4f}")
-    print("\nMatriz de Confusión:\n", confusion_matrix(all_true, all_preds))
-    print("\nReporte de Clasificación:\n", classification_report(all_true, all_preds, target_names=le.classes_))
-    
     resultados = {
         'accuracy': acc,
         'f1_global': f1_global,
         'f1_por_clase': f1_por_clase,
+        'recall_por_clase': recall_por_clase, 
+        'precision_por_clase': precision_por_clase,  
+        'kappa': kappa,  
+        'balanced_accuracy': balanced_acc,  
         'y_pred': all_preds,
         'y_true': all_true,
-        'model': model
+        'model': model,
+        'classes': le.classes_,  
+        'class_distribution': {clase: np.sum(all_true == i) for i, clase in enumerate(le.classes_)},  
+        'confusion_matrix': confusion_matrix(all_true, all_preds)  
     }
     
     return resultados
-
-
-
-
 
 
 

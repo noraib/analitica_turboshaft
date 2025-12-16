@@ -16,7 +16,7 @@ def run():
     container1.markdown("En este ámbito, los helicópteros son un caso especialmente interesante, pues su funcionamiento depende de sistemas muy sensibles, los cuales están sometidos a grandes esfuerzos mecánicos y donde cualquier fallo puede repercutir en consecuencias graves. Es por esto que es de vital importancia ser capaz de **detectar y predecir fallos en uno de los componentes más importantes del helicóptero, como son los motores** (corazón de helicóptero), permitiendo así mejorar la seguridad y la eficiencia en su construcción.")
     st.markdown("---")
     container1.subheader("Carga dataset")
-    container1.markdown("En esta primera fase cargaremos y analizaremos la información básica de los datos del dataset escogido de kaggle:"
+    container1.markdown("En esta primera fase cargaremos y analizaremos la información básica de los datos del dataset escogido de kaggle: "
                         "https://www.kaggle.com/datasets/ziya07/helicopter-turboshaft-detection-dataset")
 
 
