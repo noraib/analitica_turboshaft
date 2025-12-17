@@ -29,6 +29,8 @@ from modelos.mlp import MLP
 from modelos.mlp_mejorado import MLP_mejorado
 from modelos.lstm import LSTM_basico
 from plots import plot_confusion_matrix
+from modelos.lstm_ventana_variable import LSTM_vv 
+from modelos.ventana_lstm import collate_fn
 
 
 
@@ -331,6 +333,7 @@ def run():
         st.subheader("LSTM")
         st.write("Selección de parámetros específicos:")
         
+        #parametros
         epochs = st.slider("Número de epochs", 10, 200, 50, key="Epochs_LSTM")
         batch_size = st.selectbox("Batch size", [16, 32, 64, 128], index=3, key="Batch_LSTM")
         lr = st.number_input("Learning rate", min_value=0.0001, max_value=0.05, value=0.001, step=0.0001, key="LR_LSTM", format="%.4f")       
@@ -338,60 +341,138 @@ def run():
         dropout = st.slider("Dropout", 0.0, 0.5, 0.1, key="Dropout_LSTM")
         hidden_dim = st.number_input("Hidden dim", min_value=16, max_value=256, value=64, step=16, key="Hidden_LSTM")
         num_layers = st.number_input("Número de capas LSTM", min_value=1, max_value=4, value=2, step=1, key="Layers_LSTM")
-        ventana = st.slider("Tamaño de la ventana (timesteps)", 10, 200, 50, step=5, key="Ventana_LSTM")
-        st.markdown("---")
-        
-        st.write("Parámetros seleccionados:")
-        st.write(f"- epochs: {epochs}")
-        st.write(f"- batch_size: {batch_size}")
-        st.write(f"- learning_rate: {lr:.4f}")
-        st.write(f"- usar_class_weights: {usar_class_weights}")
-        st.write(f"- Dropout: {dropout}")
-        st.write(f"- Tamaño del test: {test_size}%")
-        st.write(f"- Hidden dim: {hidden_dim}")
-        st.write(f"- Número de capas: {num_layers}")
-        st.write(f"- Ventana (timesteps): {ventana}")
-        
-        
 
         st.markdown("---")
+
+        #Seleccion de tipo de ventana
+        tipo_ventana = st.radio("Tipo de Ventana", ["Fija (Sliding Window)", "Variable (Event-based)"], key="tipo_ventana_radio")
+        
+        if tipo_ventana == "Fija (Sliding Window)":
+            #solo se crea el slider si se ha seleccionado fijo
+            ventana = st.slider("Tamaño de la ventana (timesteps)", 10, 200, 50, step=5, key="Ventana_LSTM")
+            ventana_variable = False
+        else:
+            st.info("Ventana variable: Se agruparán los datos desde un estado 'Normal' hasta el fallo.")
+            ventana_variable = True
+            ventana = 50 #variable por defecto. no se usa, pero evita fallos
+        
+        st.markdown("---")
+        
         if st.button("Entrenar LSTM"):
             col1, col2 = st.columns(2)
-
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             
-            # Crear secuencias para LSTM
-            X_train_seq, y_train_seq = crear_secuencias(X_train.values, y_train.values, ventana)
-            X_test_seq, y_test_seq = crear_secuencias(X_test.values, y_test.values, ventana)
+            if ventana_variable:
+                #1. LIMPIEZA DE COLUMNAS
+                # Seleccionamos solo columnas que sean numéricas en el dataframe
+                numeric_df = df_filtered.select_dtypes(include=['number'])
+                
+                #Excluimos explícitamente etiquetas o columnas que no queremos como input, 'target' se añadirá después, así que no nos preocupamos de ella aquí
+                cols_to_exclude = ['Fault_Label', 'Fault_Label_Encoded', 'Timestamp']
+                feature_cols = [c for c in numeric_df.columns if c not in cols_to_exclude]
+                
+                print(f"DEBUG - Columnas seleccionadas ({len(feature_cols)}): {feature_cols}")
+                
+                if not feature_cols:
+                    st.error("No se han encontrado columnas numéricas.")
+                    st.stop()
+                
+                #2. PREPARACIÓN DE DATOS
+                df_temp = df_filtered.copy()
+                df_temp['target'] = le.transform(df_temp['Fault_Label'])
+                
+                #Creamos las secuencias usando solo las columnas limpias
+                X_seqs_all, y_seqs_all = crear_secuencias_variables(df_temp, feature_cols, 'target')
+                
+                #3. SEGURIDAD
+                #Convertimos explícitamente cada secuencia a float32 de numpy antes de tocar PyTorch antes daba error "can't convert np.ndarray of type numpy.object_"
+                try:
+                    X_seqs_all = [seq.astype(np.float32) for seq in X_seqs_all]
+                except ValueError as e:
+                    st.error(f"Error de conversión de datos: Alguna columna contiene texto o valores no numéricos. \nDetalle: {e}")
+                    st.stop()
+                
+                split_idx = int(len(X_seqs_all) * (1 - test_size/100))
+                X_train_seq = X_seqs_all[:split_idx]
+                X_test_seq = X_seqs_all[split_idx:]
+                y_train_seq = y_seqs_all[:split_idx]
+                y_test_seq = y_seqs_all[split_idx:]
+                
+                #Verificar dimensiones
+                if len(X_train_seq) == 0:
+                    st.error("No se han generado secuencias. Revisa la lógica de 'crear_secuencias_variables'.")
+                    st.stop()
 
+                input_dim = X_train_seq[0].shape[1]
+                output_dim = len(le.classes_)
+                
+                #Modelo
+                model = LSTM_vv(
+                    input_dim=input_dim,
+                    hidden_dim=hidden_dim,
+                    num_layers=num_layers,
+                    output_dim=output_dim,
+                    dropout=dropout
+                )
+                
+                #Dataset Objects
+                train_dataset_obj = SequenceDataset(X_train_seq, y_train_seq)
+                test_dataset_obj = SequenceDataset(X_test_seq, y_test_seq)
+                
+            else:
+                # === VENTANA FIJA ===
 
-            input_dim = X_train_seq.shape[2]
-            output_dim = len(np.unique(y_train_seq))
-                        
-            model = LSTM_basico(
-                        input_dim=input_dim,
-                        hidden_dim=hidden_dim,
-                        num_layers=num_layers,
-                        output_dim=output_dim,
-                        dropout=dropout
-                    )
-            
+                #Usamos los valores directos del dataframe
+                X_train_raw = X_train.values
+                y_train_raw = y_train.values
+                X_test_raw = X_test.values
+                y_test_raw = y_test.values
+
+                #input_dim es simplemente el número de columnas (features)
+                input_dim = X_train_raw.shape[1]
+                output_dim = len(le.classes_)
+                
+                #modelo
+                model = LSTM_basico(
+                    input_dim=input_dim,
+                    hidden_dim=hidden_dim,
+                    num_layers=num_layers,
+                    output_dim=output_dim,
+                    dropout=dropout
+                )
+                
+                #En modo fijo no usamos estos objetos dataset
+                train_dataset_obj = None
+                test_dataset_obj = None
+
+            # --- ENTRENAMIENTO COMÚN ---
             class_weights = None
             if usar_class_weights:
-                class_weights = compute_class_weight('balanced', classes=np.unique(y_train_seq), y=y_train_seq)
+                #Calculamos pesos sobre los datos crudos o sobre la variable y_train_seq si estamos en modo variable
+                y_for_weights = y_train_seq if ventana_variable else y_train.values
+                class_weights = compute_class_weight('balanced', classes=np.unique(y_for_weights), y=y_for_weights)
 
-            resultados_lstm = entrenar_evaluar_pytorch(
+            #Llamada a la función de entrenamiento
+            resultados_lstm = entrenar_evaluar_lstm(
                 model=model,
-                X_train=X_train_seq,
-                X_test=X_test_seq,
-                y_train=y_train_seq,
-                y_test=y_test_seq,
+                #Si es variable -> None (porque pasamos el dataset_obj)
+                #Si es fija -> Pasamos los datos RAW (X_train_raw) para que utils cree la secuencia
+                X_train=None if ventana_variable else X_train_raw,
+                X_test=None if ventana_variable else X_test_raw,
+                y_train=None if ventana_variable else y_train_raw,
+                y_test=None if ventana_variable else y_test_raw,
+                
                 le=le,
+                train_dataset=train_dataset_obj,
+                test_dataset=test_dataset_obj, 
                 epochs=epochs,
                 batch_size=batch_size,
                 lr=lr,
                 device=device,
-                class_weights=class_weights
+                class_weights=class_weights,
+                ventana_variable=ventana_variable,
+                collate_fn=collate_fn if ventana_variable else None,
+                ventana=ventana #pasmos el tamaño de ventana para que utils sepa cómo cortar
             )
 
             mostrar_resultados_modelo(resultados_lstm, le)

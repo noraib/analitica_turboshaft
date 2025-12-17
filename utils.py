@@ -485,20 +485,27 @@ def entrenar_evaluar_lstm(model,
     all_true = np.array(all_true)
     all_preds = np.array(all_preds)
 
+    # 1. Obtenemos la lista completa de índices de clases (0, 1, ..., 5)
+    all_labels = np.arange(len(le.classes_))
+
     resultados = {
         'accuracy': accuracy_score(all_true, all_preds),
         'balanced_accuracy': balanced_accuracy_score(all_true, all_preds),
         'f1_global': f1_score(all_true, all_preds, average='weighted'),
-        'f1_por_clase': f1_score(all_true, all_preds, average=None),
-        'recall_por_clase': recall_score(all_true, all_preds, average=None),
-        'precision_por_clase': precision_score(all_true, all_preds, average=None),
+        
+        # 2. MODIFICAMOS ESTAS TRES LÍNEAS:
+        # Añadimos 'labels=all_labels' y 'zero_division=0'
+        'f1_por_clase': f1_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
+        'recall_por_clase': recall_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
+        'precision_por_clase': precision_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
+        
         'kappa': cohen_kappa_score(all_true, all_preds),
         'y_true': all_true,
         'y_pred': all_preds,
         'model': model,
         'classes': le.classes_,
         'class_distribution': {clase: np.sum(all_true == i) for i, clase in enumerate(le.classes_)},
-        'confusion_matrix': confusion_matrix(all_true, all_preds),
+        'confusion_matrix': confusion_matrix(all_true, all_preds, labels=all_labels), # Opcional: asegurar matriz completa también
         'ventana_usada': ventana,
         'ventana_variable': ventana_variable
     }
@@ -596,3 +603,33 @@ def analisis_patrones_por_fallo(fallos, median_matrix):
         caracteristico = medians.abs().idxmax()
         
         print(f"  Sensor más CARACTERÍSTICO: {caracteristico} ({medians[caracteristico]:.2f})")
+
+
+def crear_secuencias_variables(df, features_cols, target_col, sequence_id_col=None):
+    """
+    Divide el DataFrame en una lista de secuencias de longitud variable.
+
+    """
+    X_seqs = []
+    y_seqs = []
+    
+    if sequence_id_col and sequence_id_col in df.columns:
+        for _, group in df.groupby(sequence_id_col):
+            X_seqs.append(group[features_cols].values)
+            y_seqs.append(group[target_col].iloc[-1])
+            
+    else:
+        current_seq = []
+        
+        for i, row in df.iterrows():
+            current_seq.append(row[features_cols].values)
+            
+            if row[target_col] != 0: 
+                X_seqs.append(np.array(current_seq))
+                y_seqs.append(row[target_col])
+                current_seq = []
+                
+        if len(current_seq) > 0:
+            pass 
+
+    return X_seqs, y_seqs
