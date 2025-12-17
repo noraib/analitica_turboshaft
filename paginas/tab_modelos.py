@@ -93,6 +93,10 @@ def run():
     else:
         df_filtered = df
         st.sidebar.info("No hay columna de fechas disponible para filtrar")
+    
+    #Convertimos a datetime para evitar error
+    if 'Timestamp' in df_filtered.columns:
+        df_filtered['Timestamp'] = pd.to_datetime(df_filtered['Timestamp'])
 
     # Parámetros interactivos
     st.sidebar.subheader("Parámetros de entrenamiento")
@@ -110,6 +114,72 @@ def run():
     st.session_state['le'] = le
     
     X_train, X_test, y_train, y_test = split_data(X, y, test_size/100)
+
+    #SELECCIÓN DE CARACTERÍSTICAS
+    st.markdown("---")
+    st.subheader("🛠️ Selección de Variables (Feature Selection)")
+
+    #identificamos las columnas numericas disponibles
+    available_features = X_train.columns.tolist()
+
+    if 'global_feature_selector' not in st.session_state:
+        #por defecto, seleccionamos todas
+        st.session_state['global_feature_selector'] = available_features
+
+    #inicializamos el dataframe de importancia
+    if 'feature_importance_df' not in st.session_state:
+        st.session_state['feature_importance_df'] = None
+
+
+    col_fs_1, col_fs_2 = st.columns([1, 3])
+    
+    with col_fs_1:
+        if st.button("✨ Sugerir las mejores variables"):
+            with st.spinner("Calculando importancia..."):
+                #entrenamos Random Forest
+                rf_selector = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+                rf_selector.fit(X_train, y_train)
+                
+                #extraemos importancia
+                importances = rf_selector.feature_importances_
+                df_imp = pd.DataFrame({'Feature': available_features, 'Importance': importances})
+                df_imp = df_imp.sort_values(by='Importance', ascending=False)
+                
+                #nos quedamos con el top 7
+                top_n = min(7, len(available_features))
+                top_features = df_imp.head(top_n)['Feature'].tolist()
+
+                #guardamos el df para el gráfico
+                st.session_state['feature_importance_df'] = df_imp
+                st.session_state['global_feature_selector'] = top_features
+                st.success(f"Sugerencia aplicada: {len(top_features)} variables.")
+                
+                #forzamos recarga para que el multiselect se actualice
+                st.rerun()
+
+    with col_fs_2:
+        selected_features = st.multiselect(
+            "Selecciona las variables para TODOS los modelos:",
+            options=available_features,
+            key="global_feature_selector" 
+        )
+
+    #gráfico
+    if st.session_state['feature_importance_df'] is not None:
+        with st.expander("Ver gráfico de importancia"):
+            st.bar_chart(st.session_state['feature_importance_df'].set_index('Feature'))
+
+    #validación
+    if not selected_features:
+        st.error("Selecciona al menos una variable.")
+        st.stop()
+
+    #filtrado global de datos
+    X_train = X_train[selected_features]
+    X_test = X_test[selected_features]
+    
+    st.info(f"Modelos configurados con {len(selected_features)} variables.")
+    st.markdown("---")
 
     # Crear pestañas para los modelos
     tab1, tab2, tab3, tab8 = st.tabs([
@@ -363,13 +433,7 @@ def run():
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             
             if ventana_variable:
-                #1. LIMPIEZA DE COLUMNAS
-                # Seleccionamos solo columnas que sean numéricas en el dataframe
-                numeric_df = df_filtered.select_dtypes(include=['number'])
-                
-                #Excluimos explícitamente etiquetas o columnas que no queremos como input, 'target' se añadirá después, así que no nos preocupamos de ella aquí
-                cols_to_exclude = ['Fault_Label', 'Fault_Label_Encoded', 'Timestamp']
-                feature_cols = [c for c in numeric_df.columns if c not in cols_to_exclude]
+                feature_cols = selected_features
                 
                 print(f"DEBUG - Columnas seleccionadas ({len(feature_cols)}): {feature_cols}")
                 
