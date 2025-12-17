@@ -87,7 +87,7 @@ def plot_correlacion_heatmap(corr_matrix, vmin=-1, vmax=1, title='Matriz de Corr
 
 
 
-def plot_confusion_matrix(y_true, y_pred, class_names, title="Matriz de Confusión"):
+def plot_confusion_matrix(y_true, y_pred, class_names, title="Matriz de Confusión", labels=None):
     """
     Dibuja una matriz de confusión usando Seaborn heatmap.
 
@@ -102,7 +102,11 @@ def plot_confusion_matrix(y_true, y_pred, class_names, title="Matriz de Confusi�
     title : str
         Título del gráfico.
     """
-    cm = confusion_matrix(y_true, y_pred)
+    #Si se pasan labels, forzamos la forma de la matriz
+    if labels is not None:
+        cm = confusion_matrix(y_true, y_pred, labels=labels)
+    else:
+        cm = confusion_matrix(y_true, y_pred)
     
     fig, ax = plt.subplots(figsize=(8,6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
@@ -111,7 +115,6 @@ def plot_confusion_matrix(y_true, y_pred, class_names, title="Matriz de Confusi�
     ax.set_title(title)
     plt.tight_layout()
     return fig
-
 
 def plot_heatmap_medianas(median_matrix, title="Heatmap de medianas"):
     """

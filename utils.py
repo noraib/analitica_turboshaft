@@ -17,6 +17,10 @@ from sklearn.model_selection import train_test_split
 
 from modelos.ventana_lstm import SequenceDataset, collate_fn
 
+import matplotlib.pyplot as plt
+
+from plots import plot_confusion_matrix
+
 #----DETECCION OUTLIERS----#
 def calcular_outliers_iqr(df):
     """
@@ -242,6 +246,70 @@ def mostrar_resultados_notebook(resultados, le):
         y_true=resultados['y_true'],
         y_pred=resultados['y_pred'],
         class_names=le.classes_
+    )
+    plt.show()
+
+
+def mostrar_resultados_notebook_variable(resultados, le):
+    """
+    Lo mismo que lo de arriba, pero ahora necesitamos tratar la matriz de confusión de manera diferente
+    """
+    
+    print("Resultados del Modelo (Variable)")
+    print("--------------------------------")
+
+    acc = resultados.get('accuracy', 0)
+    bal_acc = resultados.get('balanced_accuracy', 0)
+    f1 = resultados.get('f1_global', 0)
+    kappa = resultados.get('kappa', 0)
+    
+    print(f"Accuracy: {acc:.3f}")
+    print(f"Balanced Accuracy: {bal_acc:.3f}")
+    print(f"F1 Global: {f1:.3f}")
+    print(f"Kappa: {kappa:.3f}")
+    print(f"Muestras en test: {len(resultados['y_true'])}\n")
+    
+    print("Métricas por Clase:")
+    metrics_data = []
+    clases = le.classes_
+    
+    for i, clase in enumerate(clases):
+        prec = resultados['precision_por_clase'][i] if i < len(resultados['precision_por_clase']) else 0
+        rec = resultados['recall_por_clase'][i] if i < len(resultados['recall_por_clase']) else 0
+        f1_cls = resultados['f1_por_clase'][i] if i < len(resultados['f1_por_clase']) else 0
+        
+        metrics_data.append({
+            'Clase': clase,
+            'Precision': prec,
+            'Recall': rec,
+            'F1': f1_cls,
+        })
+    
+    df_class_metrics = pd.DataFrame(metrics_data)
+    display(df_class_metrics.style.format({
+        'Precision': '{:.3f}',
+        'Recall': '{:.3f}',
+        'F1': '{:.3f}'
+    }))
+    
+    print("Distribución de clases en el conjunto de test:")
+    if 'class_distribution' in resultados:
+        for clase, count in resultados['class_distribution'].items():
+            porcentaje = (count / len(resultados['y_true'])) * 100
+            print(f"  {clase}: {count} muestras ({porcentaje:.2f}%)")
+    
+    print("\nMatriz de Confusión:")
+    
+    y_true = resultados['y_true']
+    y_pred = resultados['y_pred']
+    
+    todos_los_indices = np.arange(len(clases))
+    
+    fig = plot_confusion_matrix(
+        y_true, 
+        y_pred, 
+        class_names=clases, 
+        labels=todos_los_indices
     )
     plt.show()
     
