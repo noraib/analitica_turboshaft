@@ -6,6 +6,7 @@ from utils import split_data
 from utils import split_data
 from utils import evaluar_modelo_scikit, mostrar_resultados_notebook
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 from xgboost import XGBClassifier
 from sklearn.svm import SVC
 
@@ -13,6 +14,8 @@ import pandas as pd
 import numpy as np
 from imblearn.over_sampling import SMOTE
 from collections import Counter
+import bentoml
+import json
 
 
 def preparar_datos(df):
@@ -117,23 +120,83 @@ def selecccion_caracteristicas(X, y):
     print(f"Distribución de clases en prueba: {np.bincount(y_test)}")
 
 
-
 def random_forest(X_train, X_test, y_train, y_test, le):
     rf_model = RandomForestClassifier(n_estimators=10, random_state=111, class_weight='balanced')
     resultados_rf = evaluar_modelo_scikit(rf_model, X_train, X_test, y_train, y_test, "Random Forest", le)
+
+    bentoml.sklearn.save_model(
+        "modelo_RandomForest", 
+        rf_model,
+        signatures={"predict": {"batchable": True}}
+    )
+    
+    bentoml.sklearn.save_model("turboshaft_le", le)
+    
+    if hasattr(X_train, 'columns'):
+        bentoml.picklable_model.save_model(
+            "turboshaft_features", 
+            X_train.columns.tolist()
+        )
+        
+    print(f"Modelo guardado en BentoML.")
+    
     return resultados_rf
 
 
 def gbm(X_train, X_test, y_train, y_test, le):
-    gbm_model = RandomForestClassifier(n_estimators=10, random_state=111, class_weight='balanced')
+    gbm_model = GradientBoostingClassifier(n_estimators=50, random_state=111)
     resultados_gbm = evaluar_modelo_scikit(gbm_model, X_train, X_test, y_train, y_test, "Gradient Boosting", le)
-    return resultados_gbm    
 
+    bentoml.sklearn.save_model(
+        "modelo_GBM",
+        gbm_model,
+        signatures={"predict": {"batchable": True}}
+    )
     
+    bentoml.sklearn.save_model("turboshaft_le", le)
+    
+    if hasattr(X_train, 'columns'):
+        bentoml.picklable_model.save_model(
+            "turboshaft_features", 
+            X_train.columns.tolist()
+        )
+        
+    print(f"Modelo guardado en BentoML.")
+    
+    return resultados_gbm  
+
+
+
 def xgboost(X_train, X_test, y_train, y_test, le):
-    ratio = np.bincount(y_train)[0] / np.bincount(y_train)[1]
-    xgb_model = XGBClassifier(n_estimators=100, random_state=111, use_label_encoder=False, eval_metric='mlogloss', scale_pos_weight=ratio)
+    counts = np.bincount(y_train)
+    ratio = counts[0] / counts[1] if len(counts) > 1 else 1
+    
+    xgb_model = XGBClassifier(
+        n_estimators=100, 
+        random_state=111, 
+        use_label_encoder=False, 
+        eval_metric='mlogloss', 
+        scale_pos_weight=ratio
+    )
+
     resultados_xgb = evaluar_modelo_scikit(xgb_model, X_train, X_test, y_train, y_test, "XGBoost", le)
+
+    bentoml.sklearn.save_model(
+        "modelo_XGBoost", 
+        xgb_model,
+        signatures={"predict": {"batchable": True}}
+    )
+    
+    bentoml.sklearn.save_model("turboshaft_le", le)
+    
+    if hasattr(X_train, 'columns'):
+        bentoml.picklable_model.save_model(
+            "turboshaft_features", 
+            X_train.columns.tolist()
+        )
+        
+    print(f"Modelo guardado en BentoML.")
+    
     return resultados_xgb
 
 def svm(X_train, X_test, y_train, y_test, le):
@@ -141,4 +204,24 @@ def svm(X_train, X_test, y_train, y_test, le):
     resultados_svm = evaluar_modelo_scikit(svm_model, X_train, X_test, y_train, y_test, "SVM", le)
     return resultados_svm
 
-
+def svm(X_train, X_test, y_train, y_test, le):
+    svm_model = SVC(kernel='rbf', probability=True, random_state=111, class_weight='balanced')
+    resultados_svm = evaluar_modelo_scikit(svm_model, X_train, X_test, y_train, y_test, "SVM", le)
+    
+    bentoml.sklearn.save_model(
+        "modelo_SVM", 
+        svm_model,
+        signatures={"predict": {"batchable": True}}
+    )
+    
+    bentoml.sklearn.save_model("turboshaft_le", le)
+    
+    if hasattr(X_train, 'columns'):
+        bentoml.picklable_model.save_model(
+            "turboshaft_features", 
+            X_train.columns.tolist()
+        )
+        
+    print(f"Modelo guardado en BentoML.")
+    
+    return resultados_svm
