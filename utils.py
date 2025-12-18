@@ -15,7 +15,6 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 
-from modelos.ventana_lstm import SequenceDataset, collate_fn
 
 import matplotlib.pyplot as plt
 
@@ -248,70 +247,6 @@ def mostrar_resultados_notebook(resultados, le):
         class_names=le.classes_
     )
     plt.show()
-
-
-def mostrar_resultados_notebook_variable(resultados, le):
-    """
-    Lo mismo que lo de arriba, pero ahora necesitamos tratar la matriz de confusión de manera diferente
-    """
-    
-    print("Resultados del Modelo (Variable)")
-    print("--------------------------------")
-
-    acc = resultados.get('accuracy', 0)
-    bal_acc = resultados.get('balanced_accuracy', 0)
-    f1 = resultados.get('f1_global', 0)
-    kappa = resultados.get('kappa', 0)
-    
-    print(f"Accuracy: {acc:.3f}")
-    print(f"Balanced Accuracy: {bal_acc:.3f}")
-    print(f"F1 Global: {f1:.3f}")
-    print(f"Kappa: {kappa:.3f}")
-    print(f"Muestras en test: {len(resultados['y_true'])}\n")
-    
-    print("Métricas por Clase:")
-    metrics_data = []
-    clases = le.classes_
-    
-    for i, clase in enumerate(clases):
-        prec = resultados['precision_por_clase'][i] if i < len(resultados['precision_por_clase']) else 0
-        rec = resultados['recall_por_clase'][i] if i < len(resultados['recall_por_clase']) else 0
-        f1_cls = resultados['f1_por_clase'][i] if i < len(resultados['f1_por_clase']) else 0
-        
-        metrics_data.append({
-            'Clase': clase,
-            'Precision': prec,
-            'Recall': rec,
-            'F1': f1_cls,
-        })
-    
-    df_class_metrics = pd.DataFrame(metrics_data)
-    display(df_class_metrics.style.format({
-        'Precision': '{:.3f}',
-        'Recall': '{:.3f}',
-        'F1': '{:.3f}'
-    }))
-    
-    print("Distribución de clases en el conjunto de test:")
-    if 'class_distribution' in resultados:
-        for clase, count in resultados['class_distribution'].items():
-            porcentaje = (count / len(resultados['y_true'])) * 100
-            print(f"  {clase}: {count} muestras ({porcentaje:.2f}%)")
-    
-    print("\nMatriz de Confusión:")
-    
-    y_true = resultados['y_true']
-    y_pred = resultados['y_pred']
-    
-    todos_los_indices = np.arange(len(clases))
-    
-    fig = plot_confusion_matrix(
-        y_true, 
-        y_pred, 
-        class_names=clases, 
-        labels=todos_los_indices
-    )
-    plt.show()
     
     
     
@@ -475,15 +410,10 @@ from sklearn.metrics import accuracy_score, f1_score, recall_score, precision_sc
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
-def entrenar_evaluar_lstm(model, 
-                          X_train=None, X_test=None, 
-                          y_train=None, y_test=None, 
-                          le=None, 
-                          train_dataset=None, test_dataset=None,
-                          epochs=50, batch_size=32, lr=0.001, 
-                          device='cpu', class_weights=None, 
-                          ventana_variable=False, collate_fn=None,
-                          ventana=50):
+def entrenar_evaluar_lstm(model, X_train, X_test, y_train, y_test, le,
+                              epochs=50, batch_size=32, lr=0.001, 
+                              device='cpu', class_weights=None,
+                              ventana=50):
     """
     Entrena y evalúa un modelo LSTM.
 
@@ -492,41 +422,37 @@ def entrenar_evaluar_lstm(model,
     """
 
     # --- 1. Crear DataLoaders ---
-    if ventana_variable:
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    else:
-        # Crear secuencias fijas
-        X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
-        X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
+    # Crear secuencias fijas
+    X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
+    X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
 
-        train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
+    train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
                                       torch.tensor(y_train_seq, dtype=torch.long))
-        test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
+    test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
                                      torch.tensor(y_test_seq, dtype=torch.long))
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size)
-
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+    
     # --- 2. Preparar modelo y criterio ---
     model = model.to(device)
-    criterion = nn.CrossEntropyLoss(weight=torch.tensor(class_weights, dtype=torch.float32).to(device)) if class_weights is not None else nn.CrossEntropyLoss()
+    
+    # Criterio con pesos si se usan
+    if class_weights is not None:
+        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+    else:
+        criterion = nn.CrossEntropyLoss()
+    
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # --- 3. Entrenamiento ---
     model.train()
     for epoch in range(epochs):
-        for batch in train_loader:
+        for xb, yb in train_loader:
+            xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            if ventana_variable:
-                xb, yb, lengths = batch
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb, lengths)
-            else:
-                xb, yb = batch
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb)
-
+            outputs = model(xb)
             loss = criterion(outputs, yb)
             loss.backward()
             optimizer.step()
@@ -535,16 +461,9 @@ def entrenar_evaluar_lstm(model,
     model.eval()
     all_preds, all_true = [], []
     with torch.no_grad():
-        for batch in test_loader:
-            if ventana_variable:
-                xb, yb, lengths = batch
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb, lengths)
-            else:
-                xb, yb = batch
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb)
-
+        for xb, yb in test_loader:
+            xb, yb = xb.to(device), yb.to(device)
+            outputs = model(xb)
             preds = torch.argmax(outputs, dim=1).cpu().numpy()
             all_preds.extend(preds)
             all_true.extend(yb.cpu().numpy())
@@ -574,8 +493,7 @@ def entrenar_evaluar_lstm(model,
         'classes': le.classes_,
         'class_distribution': {clase: np.sum(all_true == i) for i, clase in enumerate(le.classes_)},
         'confusion_matrix': confusion_matrix(all_true, all_preds, labels=all_labels), # Opcional: asegurar matriz completa también
-        'ventana_usada': ventana,
-        'ventana_variable': ventana_variable
+        'ventana_usada': ventana
     }
 
     return resultados
@@ -599,28 +517,19 @@ def crear_secuencias(X, y, ventana):
 
 def crear_dataloaders_ventana(X_train, y_train, X_test, y_test, batch_size=64, ventana=50, ventana_variable=False):
     """
-    Crea DataLoaders para LSTM con ventana fija o variable (padding).
+    Crea DataLoaders para LSTM con ventana fija.
     """
-    if ventana_variable:
-        # Secuencias con longitud variable usando collate_fn
-        train_dataset = SequenceDataset(X_train, y_train)
-        test_dataset = SequenceDataset(X_test, y_test)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-        return train_loader, test_loader, None, None, None, None
-
-    else:
-        # Secuencias fijas
-        X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
-        X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
-        train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
+    # Secuencias fijas
+    X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
+    X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
+    train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
                                       torch.tensor(y_train_seq, dtype=torch.long))
-        test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
+    test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
                                      torch.tensor(y_test_seq, dtype=torch.long))
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
 
-        return train_loader, test_loader, X_train_seq, X_test_seq, y_train_seq, y_test_seq
+    return train_loader, test_loader, X_train_seq, X_test_seq, y_train_seq, y_test_seq
 
 
 
@@ -671,33 +580,3 @@ def analisis_patrones_por_fallo(fallos, median_matrix):
         caracteristico = medians.abs().idxmax()
         
         print(f"  Sensor más CARACTERÍSTICO: {caracteristico} ({medians[caracteristico]:.2f})")
-
-
-def crear_secuencias_variables(df, features_cols, target_col, sequence_id_col=None):
-    """
-    Divide el DataFrame en una lista de secuencias de longitud variable.
-
-    """
-    X_seqs = []
-    y_seqs = []
-    
-    if sequence_id_col and sequence_id_col in df.columns:
-        for _, group in df.groupby(sequence_id_col):
-            X_seqs.append(group[features_cols].values)
-            y_seqs.append(group[target_col].iloc[-1])
-            
-    else:
-        current_seq = []
-        
-        for i, row in df.iterrows():
-            current_seq.append(row[features_cols].values)
-            
-            if row[target_col] != 0: 
-                X_seqs.append(np.array(current_seq))
-                y_seqs.append(row[target_col])
-                current_seq = []
-                
-        if len(current_seq) > 0:
-            pass 
-
-    return X_seqs, y_seqs

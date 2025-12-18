@@ -29,8 +29,6 @@ from modelos.mlp import MLP
 from modelos.mlp_mejorado import MLP_mejorado
 from modelos.lstm import LSTM_basico
 from plots import plot_confusion_matrix
-from modelos.lstm_ventana_variable import LSTM_vv 
-from modelos.ventana_lstm import collate_fn
 
 
 
@@ -449,11 +447,7 @@ def run():
                 output_dim=output_dim,
                 dropout=dropout
             )
-                
-            #En modo fijo no usamos estos objetos dataset
-            train_dataset_obj = None
-            test_dataset_obj = None
-
+            
             # --- ENTRENAMIENTO COMÚN ---
             class_weights = None
             
@@ -472,15 +466,11 @@ def run():
                 y_test=y_test_raw,
                 
                 le=le,
-                train_dataset=train_dataset_obj,
-                test_dataset=test_dataset_obj, 
                 epochs=epochs,
                 batch_size=batch_size,
                 lr=lr,
                 device=device,
                 class_weights=class_weights,
-                ventana_variable=False,
-                collate_fn=None,
                 ventana=ventana #pasmos el tamaño de ventana para que utils sepa cómo cortar
             )
 
