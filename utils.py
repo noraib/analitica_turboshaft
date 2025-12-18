@@ -1,57 +1,87 @@
+# FUNCIONALIDADES PRINCIPALES:
+# 1. Deteccion y analisis de outliers (IQR)
+# 2. Calculo de correlaciones y patrones por fallo
+# 3. Preprocesamiento y split de datos
+# 4. Evaluacion de modelos (scikit-learn y PyTorch)
+# 5. Utilidades para modelos LSTM con ventanas fijas/variables
+# 6. Visualización de resultados
+
+
+
+
+#----------------------------------------#
+#------------- DEPENDENCIAS -------------#
+#----------------------------------------#
 from IPython.display import display
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import numpy as np
-import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report,recall_score, precision_score, cohen_kappa_score, balanced_accuracy_score, matthews_corrcoef, roc_auc_score
-from sklearn.utils.class_weight import compute_class_weight
+import matplotlib.pyplot as plt
 
+# Evaluacion de modelos
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report, recall_score, precision_score, cohen_kappa_score, balanced_accuracy_score, matthews_corrcoef, roc_auc_score
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+
+# PyTorch
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
+# Importaciones propias
+from modelos.ventana_lstm import SequenceDataset, collate_fn  
+from plots import plot_confusion_matrix  
 
 
-import matplotlib.pyplot as plt
 
-from plots import plot_confusion_matrix
 
-#----DETECCION OUTLIERS----#
+
+#------------------------------------#
+#------------- OUTLIERS -------------#
+#------------------------------------#
 def calcular_outliers_iqr(df):
     """
-    Calcula información de outliers para cada columna numérica de un DataFrame usando el criterio del IQR (Interquartile Range).
+    Calcula informacion de outliers para cada columna numerica de un DataFrame usando el criterio del IQR.
 
-    Parámetros:
+    Parametros:
     -----------
-    df (pd.DataFrame): DataFrame con los datos numéricos a analizar.
+    df (pd.DataFrame): DataFrame con los datos numericos a analizar.
 
     Retorna:
     --------
-    dict: Diccionario donde cada clave es una columna numérica y cada valor es otro diccionario con:
-        - 'count': número de outliers
+    dict: Diccionario donde cada clave es una columna numerica y cada valor es otro diccionario con:
+        - 'count': numero de outliers
         - 'percent': porcentaje de outliers
-        - 'lower_bound': límite inferior para detectar outliers
-        - 'upper_bound': límite superior para detectar outliers
+        - 'lower_bound': limite inferior para detectar outliers
+        - 'upper_bound': limite superior para detectar outliers
     """
+    
+    # Seleccionar columnas numericas
     numeric_cols = df.select_dtypes(include=[np.number]).columns
         
     outliers_info = {}
         
+    # Calcular outliers para cada columna
     for columna in numeric_cols:
+        # Calculo de cuartiles (25% y 75%)
         Q1 = df[columna].quantile(0.25)
         Q3 = df[columna].quantile(0.75)
+        
+        # Rango intercuartil (IQR)
         IQR = Q3 - Q1
             
+        # Limites para detectar outliers
         limite_inferior = Q1 - 1.5 * IQR
         limite_superior = Q3 + 1.5 * IQR
             
+        # Deteccion de outliers
         outliers = df[(df[columna] < limite_inferior) | (df[columna] > limite_superior)]
         porcentaje_outliers = (len(outliers) / len(df)) * 100
-            
+        
+        # Almacenar informacion
         outliers_info[columna] = {
             'count': len(outliers),
             'percent': porcentaje_outliers,
@@ -62,13 +92,16 @@ def calcular_outliers_iqr(df):
     return outliers_info
 
 
+
+
+
 def generar_df_estadisticas_outliers(df):
     """
-    Genera un DataFrame con estadísticas de outliers para cada columna numérica, listo para usar en visualizaciones o análisis adicionales.
+    Genera un DataFrame con estadisticas de outliers para cada columna numerica, para usar en visualizaciones.
 
-    Parámetros:
+    Parametros:
     -----------
-    - df (pd.DataFrame): DataFrame con los datos numéricos a analizar.
+    - df (pd.DataFrame): DataFrame con los datos numericos a analizar.
 
     Retorna:
     --------
@@ -79,9 +112,11 @@ def generar_df_estadisticas_outliers(df):
         - upper_bound: límite superior IQR
         Ordenado de menor a mayor porcentaje de outliers.
     """
+    
+    # Deteccion de outliers
     outliers_info = calcular_outliers_iqr(df)
 
-    #Añadimos la informacion para detectar outliers
+    #Anadir a DataFrame y ordenar por porcentaje
     resultados_df = pd.DataFrame(outliers_info).T
     resultados_df = resultados_df.sort_values('percent', ascending=True)
     
@@ -91,35 +126,45 @@ def generar_df_estadisticas_outliers(df):
 
 
 
-#----MATRIZ CORRELACION----#
+#---------------------------------------#
+#------------- CORRELACION -------------#
+#---------------------------------------#
 def calculo_matriz_correlacion(df, numeric_cols = None):
     """
-    Calcula la matriz de correlación de un DataFrame.
+    Calcula la matriz de correlacion de un DataFrame.
     
-    Parámetros:
+    Parametros:
     -----------
         - df (pd.DataFrame): DataFrame con los datos.
-        - numeric_cols (list, opcional): Lista de columnas numéricas a usar para la correlación. Si es None, se usan todas las columnas numéricas.
+        - numeric_cols (list, opcional): Lista de columnas numericas a usar para la correlacion.
+                                        Si es None, se usan todas las columnas numericas.
 
     Retorna:
     --------
-        - pd.DataFrame: Matriz de correlación.
+        - pd.DataFrame: Matriz de correlacion.
     """
 
+    # Seleccionar columnas numericas si no se especifican
     if numeric_cols is None:
         numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
     
+    # Calcular matriz de correlacion
     corr_matrix = df[numeric_cols].corr()
+    
     return corr_matrix
 
 
 
 
+
+#----------------------------------#
+#------------- FALLOS -------------#
+#----------------------------------#
 def calcular_medianas_por_fallo(df, fallos, sensores_principales):
     """
     Calcula la mediana de cada sensor para cada tipo de fallo.
 
-    Parámetros:
+    Parametros:
     - df (pd.DataFrame): DataFrame con los datos.
     - fallos (list): lista de tipos de fallo.
     - sensores_principales (list): lista de nombres de columnas de sensores.
@@ -127,31 +172,58 @@ def calcular_medianas_por_fallo(df, fallos, sensores_principales):
     Retorna:
     - pd.DataFrame: matriz de medianas (fallos x sensores).
     """
+    
+    # Crear dataframe con fallos como filas y sensores como columnas
     median_matrix = pd.DataFrame(index=fallos, columns=sensores_principales)
+    
+    # Calcular medianas para cada combinacion de fallo y sensor
     for fallo in fallos:
         for sensor in sensores_principales:
+            # Filtrar por dupla fallo-sensor y calcular mediana
             median_matrix.loc[fallo, sensor] = df[df['Fault_Label'] == fallo][sensor].median()
+    
     return median_matrix.astype(float)
 
 
 
 
-#----MODELOS----#
+
+
+
+
+
+
+#-----------------------------------#
+#------------- MODELOS -------------#
+#-----------------------------------#
 def preprocesar_datos(df, target_col="Fault_Label"):
+    
+    # Codificar variable objetivo, pasar cada clase a un numero
     le = LabelEncoder()
+    # Agregar columna codificada
     df[f"{target_col}_Encoded"] = le.fit_transform(df[target_col])
     
+    # Seleccionar solo columnas numericas para el modelo
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+    
+    # Eliminar la columna objetivo codificada de las features
     if f"{target_col}_Encoded" in numeric_cols:
         numeric_cols.remove(f"{target_col}_Encoded")
     
+    # Dividir en X e y
     X = df[numeric_cols]
     y = df[f"{target_col}_Encoded"]
+    
     return X, y, le
 
 
+
+
 def split_data(X, y, test_size=0.3, random_state=111):
+    # Dividir en train y test con estratificacion para mantener distribucion de clases
     return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
+
+
 
 
 def evaluar_modelo_scikit(modelo, X_train, X_test, y_train, y_test, nombre_modelo, le):
@@ -164,20 +236,20 @@ def evaluar_modelo_scikit(modelo, X_train, X_test, y_train, y_test, nombre_model
     y_pred = modelo.predict(X_test)
     y_pred_proba = modelo.predict_proba(X_test) if hasattr(modelo, "predict_proba") else None
     
-    # Métricas globales
+    # Calculo de metricas globales
     acc = accuracy_score(y_test, y_pred)
     f1_global = f1_score(y_test, y_pred, average='weighted')
     
-    # Métricas por clase 
+    # Calculo de metricas por clase
     f1_por_clase = f1_score(y_test, y_pred, average=None)
     recall_por_clase = recall_score(y_test, y_pred, average=None)
     precision_por_clase = precision_score(y_test, y_pred, average=None)
     
-    # Matriz de confusión
+    # Calculo de matriz de confusion
     cm = confusion_matrix(y_test, y_pred)
     
-    # Métricas extra pa desbalanceo
-    # Cohen's Kappa (mejor que accuracy pa desbalanceo)
+    # Metricas extra para desbalanceo
+    # Cohen's Kappa (mejor que accuracy para desbalanceo)
     kappa = cohen_kappa_score(y_test, y_pred)
     
     # Balanced Accuracy (promedio de recall por clase)
@@ -200,11 +272,12 @@ def evaluar_modelo_scikit(modelo, X_train, X_test, y_train, y_test, nombre_model
         'class_distribution': {clase: np.sum(y_test == i) for i, clase in enumerate(le.classes_)}
     }
     
+    
+
+    
 def mostrar_resultados_notebook(resultados, le):
     """Muestra los resultados de un modelo en un notebook con el layout especificado."""
-    import matplotlib.pyplot as plt
-    from plots import plot_confusion_matrix
-    
+        
     print("Resultados del Modelo")
     print("---------------------")
     
@@ -247,7 +320,7 @@ def mostrar_resultados_notebook(resultados, le):
         class_names=le.classes_
     )
     plt.show()
-    
+
     
     
 
