@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from paginas import tab_contexto, tab_eda, tab_modelos
 
-#----CONFIGURACIÓN BÁSICA---- #
+#cONFIGURACIÓN BÁSICA
 st.set_page_config(
     page_title="Detección de Fallos en Motores Turboshaft",
     layout="wide"
@@ -14,13 +14,19 @@ st.markdown("---")
 
 
 
-# ----CARGA DE DATOS---- #
+#CARGA DE DATOS
 file_name = "data/Helicopter_Turboshaft_Fault_Detection.csv"
 
 @st.cache_data
 def load_data():
     try:
         df = pd.read_csv(file_name)
+        
+        # Convertimos explícitamente a datetime nada más cargar.
+        # 'coerce' convertirá errores en NaT (Not a Time) para no romper el código.
+        if 'Timestamp' in df.columns:
+            df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+            
         return df
     except FileNotFoundError:
         st.error(f"No se ha encontrado el archivo {file_name}. Verifica la ruta.")
@@ -38,7 +44,7 @@ if 'df' not in st.session_state:
 
 
 
-#----MENU LATERAL---- #
+#MENU LATERAL
 st.sidebar.header("Pestañas")
 seccion = st.sidebar.radio(
     "Selecciona una sección:",
@@ -48,7 +54,7 @@ seccion = st.sidebar.radio(
 
 
 
-# ----SECCION SELECCIONADA---- #
+#SECCION SELECCIONADA
 if 'df' in st.session_state and st.session_state['df'] is not None:
     if seccion == "Contexto":
         tab_contexto.run()

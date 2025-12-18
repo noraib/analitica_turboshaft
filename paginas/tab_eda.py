@@ -74,7 +74,6 @@ def run():
              "❗ Fallos",
              "⚙️ Sensores",
              "⌚️ Tendencia temporal",
-             "📡 Radar por fallo",
              "🧭 PCA"]
         )
         
@@ -83,7 +82,8 @@ def run():
         #----Estadisticas Descriptivas----#
         if opcion_analisis == "📊 Estadísticas Descriptivas":
             st.subheader("Estadísticas Descriptivas")
-            st.dataframe(df_filtered.describe())
+            df_numerico = df_filtered.select_dtypes(include=[np.number])
+            st.dataframe(df_numerico.describe())
             
         #----Distribuciones----#
         elif opcion_analisis == "📈 Distribuciones":
