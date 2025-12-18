@@ -21,31 +21,90 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.utils.class_weight import compute_class_weight
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, accuracy_score, balanced_accuracy_score, f1_score, recall_score, precision_score, cohen_kappa_score
 import torch
+import bentoml # NUEVO
 
-from utils import preprocesar_datos, split_data, evaluar_modelo_scikit, entrenar_evaluar_pytorch
+from utils import preprocesar_datos, split_data, evaluar_modelo_scikit, entrenar_evaluar_pytorch, crear_secuencias
 from modelos.mlp import MLP
 from modelos.mlp_mejorado import MLP_mejorado
 from modelos.lstm import LSTM_basico
 from plots import plot_confusion_matrix
-
-
+# Importamos la clase para que el pickle funcione al cargar
+from modelos.lstm_ventana_variable import LSTM_vv 
 
 from utils import *
 from modelos.mlp import MLP
 
-def run():
-    st.header("🤖 Modelado de Machine Learning")
+#funcion para evaluar desde bento
+def evaluar_modelo_bento(model, X_test, y_test, nombre_modelo, le, es_secuencial=False, es_pytorch=False, ventana=50, es_variable=False):
+    """
+    Evalúa un modelo cargado de BentoML sin re-entrenar.
+    Replica el diccionario de resultados que espera 'mostrar_resultados_modelo'.
+    """
+    #Predecir
+    if es_pytorch:
+        model.eval()
+        with torch.no_grad():
+            if es_secuencial:
+                # Crear secuencias con la ventana especificada
+                X_seq, y_seq = crear_secuencias(X_test, y_test, ventana)
+                
+                # Validación de seguridad
+                if len(X_seq) == 0:
+                    st.error("El test set es muy pequeño para esta ventana.")
+                    return None
+                
+                X_tensor = torch.tensor(X_seq, dtype=torch.float32)
+                y_true = y_seq 
+                
+                # Manejo específico del modelo de Ventana Variable
+                if es_variable:
+                    # Como estamos evaluando con ventanas fijas creadas por 'crear_secuencias', todas tienen la misma longitud 'ventana'. Creamos el tensor lengths.
+                    lengths = torch.full((X_tensor.size(0),), ventana, dtype=torch.long)
+                    logits = model(X_tensor, lengths)
+                else:
+                    logits = model(X_tensor)
+                    
+                y_pred = torch.argmax(logits, dim=1).numpy()
+            else:
+                # MLP tabular
+                X_tensor = torch.tensor(X_test, dtype=torch.float32)
+                y_true = y_test
+                logits = model(X_tensor)
+                y_pred = torch.argmax(logits, dim=1).numpy()
+    else:
+        y_true = y_test
+        y_pred = model.predict(X_test)
+    
+    #alcular Métricas
+    return {
+        'modelo': model,
+        'accuracy': accuracy_score(y_true, y_pred),
+        'balanced_accuracy': balanced_accuracy_score(y_true, y_pred),
+        'f1_global': f1_score(y_true, y_pred, average='weighted'),
+        'f1_por_clase': f1_score(y_true, y_pred, average=None, zero_division=0),
+        'recall_por_clase': recall_score(y_true, y_pred, average=None, zero_division=0),
+        'precision_por_clase': precision_score(y_true, y_pred, average=None, zero_division=0),
+        'kappa': cohen_kappa_score(y_true, y_pred),
+        'y_true': y_true,       
+        'y_pred': y_pred,
+        'confusion_matrix': confusion_matrix(y_true, y_pred),
+        'classes': le.classes_,
+        'class_distribution': {clase: np.sum(y_true == i) for i, clase in enumerate(le.classes_)}
+    }
 
-    # Cargar datos desde sesión
+def run():
+    st.header("🤖 Modelado de Machine Learning (Evaluación BentoML)")
+
+    #Cargar datos desde sesión
     df = st.session_state['df']
     
-    # Filtro de fechas en sidebar (solo para este tab)
+    #Filtro de fechas en sidebar
     if 'Timestamp' in df.columns:
         st.sidebar.subheader("Filtro Temporal")
         
-        # Convertir a datetime si no lo está
+        #Convertir a datetime
         if not pd.api.types.is_datetime64_any_dtype(df['Timestamp']):
             df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
         
@@ -97,91 +156,63 @@ def run():
         df_filtered['Timestamp'] = pd.to_datetime(df_filtered['Timestamp'])
 
     # Parámetros interactivos
-    st.sidebar.subheader("Parámetros de entrenamiento")
+    st.sidebar.subheader("Parámetros de Evaluación")
     test_size = st.sidebar.slider("Tamaño del test (%)", 10, 30, 20)
     
-    # Eliminar encoder viejo porque puede que hayan cambiado las dimensiones
-    if 'le' in st.session_state:
-        del st.session_state['le']
-    
-    
+    #Para que las predicciones del modelo (0,1,2) coincidan con el texto real
+    try:
+        le = bentoml.sklearn.load_model("turboshaft_le:latest")
+        st.session_state['le'] = le
+    except:
+        st.error("Error: No está el LabelEncoder en BentoML. Ejecuta el notebook para guardar los modelos.")
+        return
 
-    # Preprocesamiento y split
-    X, y, le = preprocesar_datos(df_filtered)
-    # Guardar el nuevo encoder
-    st.session_state['le'] = le
-    
-    X_train, X_test, y_train, y_test = split_data(X, y, test_size/100)
-
-    #SELECCIÓN DE CARACTERÍSTICAS
-    st.markdown("---")
-    st.subheader("🛠️ Selección de Variables (Feature Selection)")
-
-    #identificamos las columnas numericas disponibles
-    available_features = X_train.columns.tolist()
-
-    if 'global_feature_selector' not in st.session_state:
-        #por defecto, seleccionamos todas
-        st.session_state['global_feature_selector'] = available_features
-
-    #inicializamos el dataframe de importancia
-    if 'feature_importance_df' not in st.session_state:
-        st.session_state['feature_importance_df'] = None
-
-
-    col_fs_1, col_fs_2 = st.columns([1, 3])
-    
-    with col_fs_1:
-        if st.button("✨ Sugerir las mejores variables"):
-            with st.spinner("Calculando importancia..."):
-                #entrenamos Random Forest
-                rf_selector = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
-                rf_selector.fit(X_train, y_train)
-                
-                #extraemos importancia
-                importances = rf_selector.feature_importances_
-                df_imp = pd.DataFrame({'Feature': available_features, 'Importance': importances})
-                df_imp = df_imp.sort_values(by='Importance', ascending=False)
-                
-                #nos quedamos con el top 7
-                top_n = min(7, len(available_features))
-                top_features = df_imp.head(top_n)['Feature'].tolist()
-
-                #guardamos el df para el gráfico
-                st.session_state['feature_importance_df'] = df_imp
-                st.session_state['global_feature_selector'] = top_features
-                st.success(f"Sugerencia aplicada: {len(top_features)} variables.")
-                
-                #forzamos recarga para que el multiselect se actualice
-                st.rerun()
-
-    with col_fs_2:
-        selected_features = st.multiselect(
-            "Selecciona las variables para TODOS los modelos:",
-            options=available_features,
-            key="global_feature_selector" 
-        )
-
-    #gráfico
-    if st.session_state['feature_importance_df'] is not None:
-        with st.expander("Ver gráfico de importancia"):
-            df_plot = st.session_state['feature_importance_df']
+    #Preprocesamiento manual para usar el Encoder cargado
+    df_proc = df_filtered.copy()
+    if 'Fault_Label' in df_proc.columns:
+        df_proc['Fault_Label_Encoded'] = le.transform(df_proc['Fault_Label'])
+        y = df_proc['Fault_Label_Encoded']
         
-            # Filtrar solo las variables seleccionadas
-            df_plot = df_plot[df_plot['Feature'].isin(selected_features)]
-            
-            st.bar_chart(df_plot.set_index('Feature'))
-
-    #validación
-    if not selected_features:
-        st.error("Selecciona al menos una variable.")
+        # Eliminamos columnas no numéricas para X
+        cols_drop = ['Fault_Label', 'Fault_Label_Encoded', 'Timestamp']
+        X = df_proc.drop(columns=[c for c in cols_drop if c in df_proc.columns])
+        X = X.select_dtypes(include=[np.number])
+    else:
+        st.error("Columna Fault_Label no encontrada.")
         st.stop()
 
-    #filtrado global de datos
+    #Split
+    #solo usaremos X_test para evaluar
+    X_train, X_test, y_train, y_test = split_data(X, y, test_size/100)
+
+    #cargar features de bento
+    try:
+        # Intentamos cargar las features que el modelo espera
+        loaded_features = bentoml.picklable_model.load_model("turboshaft_features:latest")
+        
+        # Sobrescribimos la selección para asegurar que no falle por falta de columnas
+        available_features = loaded_features
+        selected_features = loaded_features
+        
+        with st.expander("Ver variables del modelo"):
+             st.write(selected_features)
+             
+    except:
+        st.warning("No se encontró lista de features en BentoML. Usando todas las disponibles.")
+        selected_features = X.columns.tolist()
+
+    # inicializamos el dataframe de importancia
+    # filtrado global de datos
+    # Rellenamos con 0 si falta alguna columna en el CSV nuevo
+    for col in selected_features:
+        if col not in X_train.columns:
+            X_train[col] = 0
+            X_test[col] = 0
+            
     X_train = X_train[selected_features]
     X_test = X_test[selected_features]
     
-    st.info(f"Modelos configurados con {len(selected_features)} variables.")
+    st.info(f"Evaluando sobre {len(X_test)} muestras de prueba.")
     st.markdown("---")
 
     # Crear pestañas para los modelos
@@ -192,7 +223,7 @@ def run():
         "LSTM"
     ])
 
-    # ----- TAB 1: Shallow Learning -----
+    #TAB 1: Shallow Learning
     with tab1:
         tab4, tab5, tab6, tab7 = st.tabs([
             "Random Forest",
@@ -202,276 +233,117 @@ def run():
         ])
         
         with tab4:
-            st.subheader("Random Forest")
-            st.markdown("En este caso, Random Forest es un buen modelo porque combina múltiples árboles de decisión para **capturar relaciones complejas entre los sensores**. Es robusto frente a sobreajuste si se limita la profundidad de los árboles y puede manejar de manera eficiente el desbalance de clases utilizando el parámetro ***class_weight='balanced***'. Además, es capaz de detectar interacciones no lineales entre las variables, algo frecuente en datos de fallos mecánicos.")
-            
-            st.markdown("---")
-
-            st.write("Parámetros seleccionados:")
-            st.write(f"- Tamaño del test: {test_size}%")
-            
-            st.markdown("---")
-
-            st.write("Parámetros por defecto:")
-            st.write("- Modelo: Random Forest")
-            st.write("- n_estimators: 10")
-            st.write("- random_state: 111")
-            st.write(f"- class_weight: 'balanced'")
-            
-            st.markdown("---")
-
-            if st.button("Entrenar modelo Random Forest"):
-                col1, col2 = st.columns(2)
-
-                rf_model = RandomForestClassifier(n_estimators=10, random_state=111, class_weight='balanced')
-                resultados_rf = evaluar_modelo_scikit(rf_model, X_train, X_test, y_train, y_test, "Random Forest", le)
-                mostrar_resultados_modelo(resultados_rf, le)
+            st.subheader("Random Forest (BentoML)")
+            st.write("Parámetros: Pre-entrenados.")
+            if st.button("Evaluar Random Forest"):
+                with st.spinner("Cargando y evaluando..."):
+                    model = bentoml.sklearn.load_model("modelo_randomforest:latest")
+                    res = evaluar_modelo_bento(model, X_test, y_test, "Random Forest", le)
+                    mostrar_resultados_modelo(res, le)
                 
         with tab5:
-            st.subheader("Gradient Boosting")
-            st.markdown("Gradient Boosting es adecuado porque construye árboles de manera secuencial, corrigiendo los errores de los anteriores. Esto le permite capturar patrones más complejos que un único árbol y mejorar la **precisión en problemas multiclas**. También puede ajustarse para manejar desequilibrio en las clases y es **menos propenso a predecir únicamente la clase mayoritaria** en datasets desbalanceados.")
-            
-            st.markdown("---")
-
-            st.write("Parámetros seleccionados:")
-            st.write(f"- Tamaño del test: {test_size}%")
-            
-            st.markdown("---")
-
-            st.write("Parámetros por defecto:")
-            st.write("- Modelo: Gradient Boosting")
-            st.write("- max_iter: 100")
-            st.write("- random_state: 111")
-            st.write(f"- class_weight: 'balanced'")
-            
-            st.markdown("---")
-            
-            if st.button("Entrenar modelo Gradient Boosting"):
-                col1, col2 = st.columns(2)
-                
-                gb_model = HistGradientBoostingClassifier(max_iter=100, random_state=111, class_weight='balanced')
-                resultados_gb = evaluar_modelo_scikit(gb_model, X_train, X_test, y_train, y_test, "HistGradientBoosting", le)
-                mostrar_resultados_modelo(resultados_gb, le)           
+            st.subheader("Gradient Boosting (BentoML)")
+            st.write("Parámetros: Pre-entrenados.")
+            if st.button("Evaluar Gradient Boosting"):
+                with st.spinner("Cargando y evaluando..."):
+                    model = bentoml.sklearn.load_model("modelo_gbm:latest")
+                    res = evaluar_modelo_bento(model, X_test, y_test, "GBM", le)
+                    mostrar_resultados_modelo(res, le)
                 
         with tab6:
-            st.subheader("XGBoost")
-            st.markdown("XGBoost es una versión optimizada de Gradient Boosting, diseñada para ser más rápida y eficiente. Permite un control fino sobre regularización, profundidad de los árboles y balance de clases, lo que lo hace especialmente útil cuando algunas **fallas son minoritarias y difíciles de detectar**. Su eficiencia computacional permite entrenar modelos robustos sin comprometer el rendimiento.")
-            
-            st.markdown("---")
-            
-            st.write("Parámetros seleccionados:")
-            st.write(f"- Tamaño del test: {test_size}%")
-            st.markdown("---")
-
-            st.write("Parámetros por defecto:")
-            st.write("- Modelo: XGBoost")
-            st.write("- n_estimators: 100")
-            st.write("- random_state: 111")
-            st.write("- use_label_encoder: False")
-            st.write("- eval_metric: mlogloss")
-            
-            st.markdown("---")
-
-            if st.button("Entrenar modelo XGBoost"):
-                col1, col2 = st.columns(2)
-                ratio = np.bincount(y_train)[0] / np.bincount(y_train)[1]
-
-                xgb_model = XGBClassifier(n_estimators=100, random_state=111, use_label_encoder=False, eval_metric='mlogloss', scale_pos_weight=ratio)
-                resultados_xgb = evaluar_modelo_scikit(xgb_model, X_train, X_test, y_train, y_test, "XGBoost", le)
-                mostrar_resultados_modelo(resultados_xgb, le)
+            st.subheader("XGBoost (BentoML)")
+            st.write("Parámetros: Pre-entrenados.")
+            if st.button("Evaluar XGBoost"):
+                with st.spinner("Cargando y evaluando..."):
+                    model = bentoml.sklearn.load_model("modelo_xgboost:latest")
+                    res = evaluar_modelo_bento(model, X_test, y_test, "XGBoost", le)
+                    mostrar_resultados_modelo(res, le)
                 
         with tab7:
-            st.subheader("Support Vector Machine (SVM)")
-            st.markdown("SVM es útil en este problema porque busca un **margen óptimo entre clases, lo que ayuda a separar fallos minoritarios de la clase mayoritaria**. Usando un kernel no lineal (como RBF), puede capturar relaciones complejas entre los sensores que no se ven linealmente.")
-            
-            st.markdown("---")
-            
-            st.write("Parámetros seleccionados:")
-            st.write(f"- Tamaño del test: {test_size}%")
-            
-            st.markdown("---")
-
-            st.write("Parámetros por defecto:")
-            st.write("- Modelo: Support Vector Machine (SVM)")
-            st.write("- kernel: rbf")
-            st.write("- probability: True")
-            st.write("- random_state: 111")
-            st.write(f"- class_weight: 'balanced'")
-            
-            st.markdown("---")
-
-            if st.button("Entrenar modelo SVM"):
-                col1, col2 = st.columns(2)
-                svm_model = SVC(kernel='rbf', probability=True, random_state=111, class_weight='balanced')
-                resultados_svm = evaluar_modelo_scikit(svm_model, X_train, X_test, y_train, y_test, "SVM", le)                
-                mostrar_resultados_modelo(resultados_svm, le)
+            st.subheader("Support Vector Machine (BentoML)")
+            st.write("Parámetros: Pre-entrenados.")
+            if st.button("Evaluar SVM"):
+                with st.spinner("Cargando y evaluando..."):
+                    model = bentoml.sklearn.load_model("modelo_svm:latest")
+                    res = evaluar_modelo_bento(model, X_test, y_test, "SVM", le)                
+                    mostrar_resultados_modelo(res, le)
 
 
-    # ----- TAB 2: MLP Básico -----
+    #TAB 2: MLP Básico
     with tab2:
-        st.subheader("MLP Básico")
-        st.write("Selección de parámetros específicos:")
-        epochs = st.slider("Número de epochs", 10, 200, 50, key="Epochs basico")
-        batch_size = st.selectbox("Batch size", [16, 32, 64, 128], index=3, key="Batch basico")
-        lr = st.number_input("Learning rate", min_value=0.0001, max_value=0.05, value=0.001, step=0.0001, key="LR basico", format="%.4f")       
-        st.markdown("---")
-        
-        st.write("Parámetros seleccionados:")
-        st.write(f"- epochs: {epochs}")
-        st.write(f"- batch_size: {batch_size}")
-        st.write(f"- learning_rate: {lr:.4f}")
-        st.write(f"- Tamaño del test: {test_size}%")
+        st.subheader("MLP Básico (BentoML)")
+        st.write("Parámetros: Pre-entrenados.")
+        # Los sliders originales están ahí visualmente pero no afectan
+        if st.button("Evaluar MLP Básico"):
+            with st.spinner("Cargando y evaluando..."):
+                model = bentoml.pytorch.load_model("modelo_mlp:latest")
+                model.to("cpu")
+                res = evaluar_modelo_bento(model, X_test.values, y_test.values, "MLP", le, es_pytorch=True)
+                mostrar_resultados_modelo(res, le)
 
-        st.markdown("---")
-        if st.button("Entrenar MLP Básico"):
-            col1, col2 = st.columns(2)
-            
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            input_dim = X_train.shape[1]
-            output_dim = len(np.unique(y_train))
-            model = MLP(input_dim=input_dim, output_dim=output_dim)
-
-
-            resultados_mlp = entrenar_evaluar_pytorch(
-                model=model,
-                X_train=X_train.values,
-                X_test=X_test.values,
-                y_train=y_train.values,
-                y_test=y_test.values,
-                le=le,
-                epochs=epochs,
-                batch_size=batch_size,
-                lr=lr,
-                device=device
-            )
-
-            mostrar_resultados_modelo(resultados_mlp, le)
-                    
-           
-
-    # ----- TAB 3: MLP Avanzado -----
+    #TAB 3: MLP Avanzado
     with tab3:
-        st.subheader("MLP Avanzado")
-        st.write("Selección de parámetros específicos:")
-        epochs = st.slider("Número de epochs", 10, 200, 50, key="Epochs avanzado")
-        batch_size = st.selectbox("Batch size", [16, 32, 64, 128], index=3, key="Batch avanzado")
-        lr = st.number_input("Learning rate", min_value=0.0001, max_value=0.05, value=0.001, step=0.0001, key="LR avanzado", format="%.4f")       
-        usar_class_weights = st.checkbox("Usar class weights", value=False, key="Class weights avanzado")
-        dropout = st.slider("Dropout", 0.0, 0.5, 0.1, key="Dropout avanzado")
-        st.markdown("---")
+        st.subheader("MLP Avanzado (BentoML)")
         
-        st.write("Parámetros seleccionados:")
-        st.write(f"- epochs: {epochs}")
-        st.write(f"- batch_size: {batch_size}")
-        st.write(f"- learning_rate: {lr:.4f}")
-        st.write(f"- usar_class_weights: {usar_class_weights}")
-        st.write(f"- Dropout: {dropout}")
-        st.write(f"- Tamaño del test: {test_size}%")
         
+        if st.button("Evaluar MLP Avanzado"):
+            with st.spinner("Cargando y evaluando..."):
+                # Carga el modelo_mlp_mejorado
+                model = bentoml.pytorch.load_model("modelo_mlp_mejorado:latest")
+                model.to("cpu")
+                res = evaluar_modelo_bento(model, X_test.values, y_test.values, "MLP Mejorado", le, es_pytorch=True)
+                mostrar_resultados_modelo(res, le)
 
-        st.markdown("---")
-        if st.button("Entrenar MLP Avanzado"):
-            col1, col2 = st.columns(2)
-
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            input_dim = X_train.shape[1]
-            output_dim = len(np.unique(y_train))
-            model = MLP_mejorado(input_dim=input_dim, output_dim=output_dim, dropout_rate=dropout)
-
-            class_weights = None
-            if usar_class_weights:
-                class_weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
-
-            resultados_mlp = entrenar_evaluar_pytorch(
-                model=model,
-                X_train=X_train.values,
-                X_test=X_test.values,
-                y_train=y_train.values,
-                y_test=y_test.values,
-                le=le,
-                epochs=epochs,
-                batch_size=batch_size,
-                lr=lr,
-                device=device,
-                class_weights=class_weights
-            )
-
-            mostrar_resultados_modelo(resultados_mlp, le)
-            
-            
-            
-            
-    # ----- TAB 8: LSTM -----
+    #TAB 8: LSTM
     with tab8:
-        st.subheader("LSTM")
-        st.write("Selección de parámetros específicos:")
+        st.subheader("LSTM (BentoML)")
         
-        #parametros
-        epochs = st.slider("Número de epochs", 10, 200, 50, key="Epochs_LSTM")
-        batch_size = st.selectbox("Batch size", [16, 32, 64, 128], index=3, key="Batch_LSTM")
-        lr = st.number_input("Learning rate", min_value=0.0001, max_value=0.05, value=0.001, step=0.0001, key="LR_LSTM", format="%.4f")       
-        usar_class_weights = st.checkbox("Usar class weights", value=False, key="Class_weights_LSTM")
-        dropout = st.slider("Dropout", 0.0, 0.5, 0.1, key="Dropout_LSTM")
-        hidden_dim = st.number_input("Hidden dim", min_value=16, max_value=256, value=64, step=16, key="Hidden_LSTM")
-        num_layers = st.number_input("Número de capas LSTM", min_value=1, max_value=4, value=2, step=1, key="Layers_LSTM")
-
-        st.markdown("---")
-
-        #Seleccion de tipo de ventana
-        st.write("Parámetros de la ventana (fija):")   
-        ventana = st.slider("Tamaño de la ventana (timesteps)", 10, 200, 50, step=5, key="Ventana_LSTM")
+        # Selector para los 3 tipos de lstm
+        tipo_lstm = st.selectbox(
+            "Selecciona la variante de LSTM a evaluar:",
+            ["LSTM Base", "LSTM Class Weights", "LSTM Ventana Variable"]
+        )
         
-        st.markdown("---")
+        #Slider de ventana
+        #Importante: Debe coincidir con el entrenamiento. Ponemos 50 por defecto.
+        ventana = st.slider("Tamaño de la ventana (para generar secuencias de test)", 10, 200, 50, step=5)
         
-        if st.button("Entrenar LSTM"):
+        
+        if st.button(f"Evaluar {tipo_lstm}"):
             col1, col2 = st.columns(2)
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
             
-            # === VENTANA FIJA ===
-
-            #Usamos los valores directos del dataframe
-            X_train_raw = X_train.values
-            y_train_raw = y_train.values
-            X_test_raw = X_test.values
-            y_test_raw = y_test.values
-
-            #input_dim es simplemente el número de columnas (features)
-            input_dim = X_train_raw.shape[1]
-            output_dim = len(le.classes_)
-                
-            #modelo
-            model = LSTM_basico(
-                input_dim=input_dim,
-                hidden_dim=hidden_dim,
-                num_layers=num_layers,
-                output_dim=output_dim,
-                dropout=dropout
-            )
+            # Lógica de carga según selección
+            nombre_bento = ""
+            es_variable = False
             
-            # --- ENTRENAMIENTO COMÚN ---
-            class_weights = None
+            if tipo_lstm == "LSTM Base":
+                nombre_bento = "modelo_lstm:latest"
+            elif tipo_lstm == "LSTM Class Weights":
+                nombre_bento = "modelo_lstm_classweights:latest"
+            elif tipo_lstm == "LSTM Ventana Variable":
+                nombre_bento = "modelo_lstm_ventanavariable:latest"
+                es_variable = True
             
-            if usar_class_weights:
-                #Calculamos pesos sobre los datos crudos o sobre la variable y_train_seq si estamos en modo variable
-                y_for_weights = y_train.values
-                class_weights = compute_class_weight('balanced', classes=np.unique(y_for_weights), y=y_for_weights)
-
-            #Llamada a la función de entrenamiento
-            resultados_lstm = entrenar_evaluar_lstm(
-                model=model,
-                #fija -> Pasamos los datos RAW (X_train_raw) para que utils cree la secuencia
-                X_train=X_train_raw,
-                X_test=X_test_raw,
-                y_train=y_train_raw,
-                y_test=y_test_raw,
-                
-                le=le,
-                epochs=epochs,
-                batch_size=batch_size,
-                lr=lr,
-                device=device,
-                class_weights=class_weights,
-                ventana=ventana #pasmos el tamaño de ventana para que utils sepa cómo cortar
-            )
-
-            mostrar_resultados_modelo(resultados_lstm, le)
+            with st.spinner(f"Cargando {nombre_bento} y evaluando..."):
+                try:
+                    model = bentoml.pytorch.load_model(nombre_bento)
+                    model.to("cpu")
+                    
+                    res = evaluar_modelo_bento(
+                        model,
+                        X_test.values,
+                        y_test.values,
+                        tipo_lstm,
+                        le,
+                        es_secuencial=True,
+                        es_pytorch=True,
+                        ventana=ventana,
+                        es_variable=es_variable
+                    )
+                    
+                    if res:
+                        mostrar_resultados_modelo(res, le)
+                        
+                except Exception as e:
+                    st.error(f"Error cargando {nombre_bento}: {str(e)}")
+                    st.info("¿Has ejecutado el bloque de guardado masivo en el notebook?")
