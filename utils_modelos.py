@@ -16,6 +16,14 @@ from imblearn.over_sampling import SMOTE
 from collections import Counter
 import bentoml
 import json
+from torch.utils.data import TensorDataset, DataLoader
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.metrics import (accuracy_score, f1_score, recall_score,
+                             precision_score, cohen_kappa_score,
+                             balanced_accuracy_score, confusion_matrix)
+
+
 
 
 def preparar_datos(df):
@@ -209,3 +217,358 @@ def svm(X_train, X_test, y_train, y_test, le):
     print(f"Modelo guardado en BentoML.")
     
     return resultados_svm
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#----------------------------------------------#
+
+def entrenar_evaluar_pytorch(model, X_train, X_test, y_train, y_test, le,
+                             epochs=50, batch_size=32, lr=0.001, device='cpu',
+                             class_weights=None, 
+                             nombre_bento=None):
+    
+    #Si nos pasan un DataFrame, guardamos sus columnas y extraemos los valores
+    feature_names = None
+    if isinstance(X_train, pd.DataFrame):
+        feature_names = X_train.columns.tolist()
+        X_train_data = X_train.values
+    else:
+        X_train_data = X_train
+
+    if isinstance(X_test, pd.DataFrame):
+        X_test_data = X_test.values
+    else:
+        X_test_data = X_test
+
+    if isinstance(y_train, pd.Series): y_train = y_train.values
+    if isinstance(y_test, pd.Series): y_test = y_test.values
+
+    #Convertir a tensores
+    X_train_tensor = torch.tensor(X_train_data, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
+    X_test_tensor = torch.tensor(X_test_data, dtype=torch.float32)
+    y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+    
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+    
+    model = model.to(device)
+    
+    # Definir el criterio
+    if class_weights is not None:
+        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+    else:
+        criterion = nn.CrossEntropyLoss()
+    
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    
+    # --- ENTRENAMIENTO ---
+    model.train()
+    for epoch in range(epochs):
+        for xb, yb in train_loader:
+            xb, yb = xb.to(device), yb.to(device)
+            optimizer.zero_grad()
+            outputs = model(xb)
+            loss = criterion(outputs, yb)
+            loss.backward()
+            optimizer.step()
+    
+    # --- EVALUACIÓN ---
+    model.eval()
+    all_preds = []
+    all_true = []
+    with torch.no_grad():
+        for xb, yb in test_loader:
+            xb = xb.to(device)
+            outputs = model(xb)
+            preds = torch.argmax(outputs, dim=1).cpu().numpy()
+            all_preds.extend(preds)
+            all_true.extend(yb.cpu().numpy()) # .cpu() por si acaso
+    
+    all_true = np.array(all_true)
+    all_preds = np.array(all_preds)
+    
+    # Metricas
+    acc = accuracy_score(all_true, all_preds)
+    f1_global = f1_score(all_true, all_preds, average='weighted')
+    
+    if nombre_bento:
+        bentoml.pytorch.save_model(
+            nombre_bento, 
+            model,
+            signatures={"__call__": {"batchable": True, "batch_dim": 0}}
+        )
+        
+        bentoml.sklearn.save_model("turboshaft_le", le)
+        
+        if feature_names:
+            bentoml.picklable_model.save_model("turboshaft_features", feature_names)
+        
+        print(f"Modelo {nombre_bento} guardado correctamente.")
+
+    resultados = {
+        'accuracy': acc,
+        'f1_global': f1_global,
+        'f1_por_clase': f1_score(all_true, all_preds, average=None),
+        'recall_por_clase': recall_score(all_true, all_preds, average=None), 
+        'precision_por_clase': precision_score(all_true, all_preds, average=None),  
+        'kappa': cohen_kappa_score(all_true, all_preds),  
+        'balanced_accuracy': balanced_accuracy_score(all_true, all_preds),  
+        'y_pred': all_preds,
+        'y_true': all_true,
+        'model': model,
+        'classes': le.classes_,  
+        'class_distribution': {clase: np.sum(all_true == i) for i, clase in enumerate(le.classes_)},  
+        'confusion_matrix': confusion_matrix(all_true, all_preds)  
+    }
+    
+    return resultados
+
+
+
+
+
+
+def entrenar_evaluar_lstm(model, 
+                          X_train=None, X_test=None, 
+                          y_train=None, y_test=None, 
+                          le=None, 
+                          train_dataset=None, test_dataset=None,
+                          epochs=50, batch_size=32, lr=0.001, 
+                          device='cpu', class_weights=None, 
+                          ventana_variable=False, collate_fn=None,
+                          ventana=50,
+                          nombre_bento=None):
+    """
+    Entrena y evalúa un modelo LSTM (con soporte BentoML).
+    - ventana_variable=False: usa LSTM_basico y tensores 3D.
+    - ventana_variable=True: usa LSTMModel con pack_padded_sequence.
+    """
+
+    #PREPARACIÓN BENTOML
+    feature_names = None
+    if X_train is not None and hasattr(X_train, 'columns'):
+        feature_names = X_train.columns.tolist()
+
+    #Crear DataLoaders
+    if ventana_variable:
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    else:
+        #Crear secuencias fijas
+        X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
+        X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
+
+        train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
+                                      torch.tensor(y_train_seq, dtype=torch.long))
+        test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
+                                     torch.tensor(y_test_seq, dtype=torch.long))
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size)
+
+    #Preparar modelo y criterio
+    model = model.to(device)
+    
+    if class_weights is not None:
+        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+    else:
+        criterion = nn.CrossEntropyLoss()
+        
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    #Entrenamiento
+    model.train()
+    for epoch in range(epochs):
+        for batch in train_loader:
+            optimizer.zero_grad()
+            
+            if ventana_variable:
+                xb, yb, lengths = batch
+                xb, yb = xb.to(device), yb.to(device)
+                outputs = model(xb, lengths)
+            else:
+                xb, yb = batch
+                xb, yb = xb.to(device), yb.to(device)
+                outputs = model(xb)
+
+            loss = criterion(outputs, yb)
+            loss.backward()
+            optimizer.step()
+
+    #Evaluación
+    model.eval()
+    all_preds, all_true = [], []
+    with torch.no_grad():
+        for batch in test_loader:
+            if ventana_variable:
+                xb, yb, lengths = batch
+                xb, yb = xb.to(device), yb.to(device)
+                outputs = model(xb, lengths)
+            else:
+                xb, yb = batch
+                xb, yb = xb.to(device), yb.to(device)
+                outputs = model(xb)
+
+            preds = torch.argmax(outputs, dim=1).cpu().numpy()
+            all_preds.extend(preds)
+            all_true.extend(yb.cpu().numpy())
+
+    #Métricas
+    all_true = np.array(all_true)
+    all_preds = np.array(all_preds)
+    all_labels = np.arange(len(le.classes_))
+
+    #BENTOML
+    if nombre_bento:
+        bentoml.pytorch.save_model(
+            nombre_bento, 
+            model,
+            signatures={
+                "__call__": {
+                    "batchable": True, 
+                    "batch_dim": 0
+                }
+            }
+        )
+        
+        if le is not None:
+            bentoml.sklearn.save_model("turboshaft_le", le)
+        
+        if feature_names:
+            bentoml.picklable_model.save_model("turboshaft_features", feature_names)
+        
+        print(f"Modelo {nombre_bento} guardado.")
+
+    resultados = {
+        'accuracy': accuracy_score(all_true, all_preds),
+        'balanced_accuracy': balanced_accuracy_score(all_true, all_preds),
+        'f1_global': f1_score(all_true, all_preds, average='weighted'),
+        'f1_por_clase': f1_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
+        'recall_por_clase': recall_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
+        'precision_por_clase': precision_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
+        'kappa': cohen_kappa_score(all_true, all_preds),
+        'y_true': all_true,
+        'y_pred': all_preds,
+        'model': model,
+        'classes': le.classes_,
+        'class_distribution': {clase: np.sum(all_true == i) for i, clase in enumerate(le.classes_)},
+        'confusion_matrix': confusion_matrix(all_true, all_preds, labels=all_labels),
+        'ventana_usada': ventana,
+        'ventana_variable': ventana_variable
+    }
+
+    return resultados
+
+
+
+def crear_secuencias_variables(df, features_cols, target_col, sequence_id_col=None):
+    """
+    Divide el DataFrame en una lista de secuencias de longitud variable.
+
+    """
+    X_seqs = []
+    y_seqs = []
+    
+    if sequence_id_col and sequence_id_col in df.columns:
+        for _, group in df.groupby(sequence_id_col):
+            X_seqs.append(group[features_cols].values)
+            y_seqs.append(group[target_col].iloc[-1])
+            
+    else:
+        current_seq = []
+        
+        for i, row in df.iterrows():
+            current_seq.append(row[features_cols].values)
+            
+            if row[target_col] != 0: 
+                X_seqs.append(np.array(current_seq))
+                y_seqs.append(row[target_col])
+                current_seq = []
+                
+        if len(current_seq) > 0:
+            pass 
+
+    return X_seqs, y_seqs
+
+
+
+
+
+
+
+
+#----EXTRAS LSTM----#
+def crear_secuencias(X, y, ventana):
+    X_seq, y_seq = [], []
+    
+    for i in range(len(X) - ventana):
+        # Para cada posicion, tomar una secuencia de longitud de la ventana
+        X_seq.append(X[i:i+ventana])
+        y_seq.append(y[i+ventana-1])  # Etiqueta del ultimo paso
+    return np.array(X_seq), np.array(y_seq)
+
+
+
+# def crear_dataloaders_ventana(X_train, y_train, X_test, y_test, batch_size=64, ventana=50, ventana_variable=False):
+#     """
+#     Crea DataLoaders para LSTM con ventana fija.
+#     """
+#     # Secuencias fijas
+#     X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
+#     X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
+#     train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
+#                                       torch.tensor(y_train_seq, dtype=torch.long))
+#     test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
+#                                      torch.tensor(y_test_seq, dtype=torch.long))
+#     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+#     test_loader = DataLoader(test_dataset, batch_size=batch_size)
+
+#     return train_loader, test_loader, X_train_seq, X_test_seq, y_train_seq, y_test_seq
+
+

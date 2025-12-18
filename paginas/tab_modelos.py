@@ -25,7 +25,9 @@ from sklearn.metrics import confusion_matrix, accuracy_score, balanced_accuracy_
 import torch
 import bentoml # NUEVO
 
-from utils import preprocesar_datos, split_data, evaluar_modelo_scikit, entrenar_evaluar_pytorch, crear_secuencias
+from utils import preprocesar_datos, split_data, evaluar_modelo_scikit
+from utils_modelos import entrenar_evaluar_pytorch
+from utils_modelos import crear_secuencias
 from modelos.mlp import MLP
 from modelos.mlp_mejorado import MLP_mejorado
 from modelos.lstm import LSTM_basico

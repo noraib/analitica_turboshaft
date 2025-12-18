@@ -36,6 +36,7 @@ from plots import plot_confusion_matrix
 
 import bentoml
 import json
+import streamlit as st
 
 import torch
 import torch.nn as nn
@@ -137,6 +138,11 @@ def generar_df_estadisticas_outliers(df):
 
 
 
+
+
+
+
+
 #---------------------------------------#
 #------------- CORRELACION -------------#
 #---------------------------------------#
@@ -163,6 +169,11 @@ def calculo_matriz_correlacion(df, numeric_cols = None):
     corr_matrix = df[numeric_cols].corr()
     
     return corr_matrix
+
+
+
+
+
 
 
 
@@ -204,13 +215,27 @@ def calcular_medianas_por_fallo(df, fallos, sensores_principales):
 
 
 
-#-----------------------------------#
-#------------- MODELOS -------------#
+#-----------------------------------------#
+#------------- MODELOS BASIC -------------#
 #-----------------------------------#
 def preprocesar_datos(df, target_col="Fault_Label"):
+    """
+    Preprocesa el dataset para modelos de machine learning, codificando la variable objetivo y 
+    seleccionando unicamente las variables numericas como caracteristicas.
+
+    Parametros:
+    - df (pd.DataFrame): DataFrame con los datos originales.
+    - target_col (str, opcional): Nombre de la columna objetivo (por defecto 'Fault_Label').
+
+    Retorna:
+    - X (pd.DataFrame): DataFrame con las variables predictoras numericas.
+    - y (pd.Series): Serie con la variable objetivo codificada numericamente.
+    - le (LabelEncoder): Objeto LabelEncoder ajustado para decodificar las clases.
+    """
     
     # Codificar variable objetivo, pasar cada clase a un numero
     le = LabelEncoder()
+    
     # Agregar columna codificada
     df[f"{target_col}_Encoded"] = le.fit_transform(df[target_col])
     
@@ -230,15 +255,58 @@ def preprocesar_datos(df, target_col="Fault_Label"):
 
 
 
+
 def split_data(X, y, test_size=0.3, random_state=111):
+    """
+    Divide los datos en conjuntos de entrenamiento y prueba manteniendo la distribucion de clases.
+
+    Parametros:
+    - X (pd.DataFrame): Variables predictoras.
+    - y (pd.Series): Variable objetivo codificada.
+    - test_size (float, opcional): Proporción del conjunto de prueba (por defecto 0.3).
+    - random_state (int, opcional): Semilla aleatoria para reproducibilidad (por defecto 111).
+
+    Retorna:
+    - tuple: (X_train, X_test, y_train, y_test) en el mismo formato de entrada.
+    """
     # Dividir en train y test con estratificacion para mantener distribucion de clases
     return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
 
 
 
 
+
 def evaluar_modelo_scikit(modelo, X_train, X_test, y_train, y_test, nombre_modelo, le):
-    """Entrena y evalúa un modelo, mostrando métricas clave"""
+    """
+    Entrena y evalúa un modelo de clasificación de scikit-learn, devolviendo metricas
+    de rendimiento.
+
+    Parametros:
+    - modelo (sklearn.base.BaseEstimator): Modelo de clasificacion compatible con scikit-learn.
+    - X_train (pd.DataFrame): Conjunto de entrenamiento (features).
+    - X_test (pd.DataFrame): Conjunto de prueba (features).
+    - y_train (pd.Series): Etiquetas del conjunto de entrenamiento.
+    - y_test (pd.Series): Etiquetas del conjunto de prueba.
+    - nombre_modelo (str): Nombre descriptivo del modelo evaluado.
+    - le (LabelEncoder): Objeto LabelEncoder ajustado para mapear clases originales.
+
+    Retorna:
+    - dict: Diccionario con los siguientes elementos:
+        - 'modelo': Modelo entrenado.
+        - 'accuracy': Exactitud global del modelo.
+        - 'balanced_accuracy': Exactitud balanceada (media del recall por clase).
+        - 'f1_global': F1 ponderado global.
+        - 'f1_por_clase': Vector de F1-score por clase.
+        - 'recall_por_clase': Vector de recall por clase.
+        - 'precision_por_clase': Vector de precision por clase.
+        - 'kappa': Estadístico de Cohen’s Kappa (robusto frente a desbalanceo).
+        - 'y_true': Etiquetas verdaderas del conjunto de prueba.
+        - 'y_pred': Predicciones del modelo.
+        - 'y_pred_proba': Probabilidades de prediccion (si el modelo las soporta).
+        - 'confusion_matrix': Matriz de confusion.
+        - 'classes': Nombres de las clases originales.
+        - 'class_distribution': Distribución real de clases en el conjunto de prueba.
+    """
     
     # Entrenar modelo
     modelo.fit(X_train, y_train)
@@ -286,8 +354,32 @@ def evaluar_modelo_scikit(modelo, X_train, X_test, y_train, y_test, nombre_model
     
 
     
+    
+    
+    
+    
+    
+    
+#----------------------------------------------#
+#------------- MOSTRAR RESULTADOS -------------#
+#----------------------------------------------#
 def mostrar_resultados_notebook(resultados, le):
-    """Muestra los resultados de un modelo en un notebook con el layout especificado."""
+    """
+    Muestra los resultados de un modelo de clasificacion en un entorno de notebook (Jupyter),
+    incluyendo metricas globales, metricas por clase y la matriz de confusion.
+
+    Parametros:
+    - resultados (dict): Diccionario de metricas generado por la funcion de evaluacion del modelo.
+      Debe contener, al menos, las claves:
+        ['accuracy', 'balanced_accuracy', 'f1_global', 'kappa',
+         'y_true', 'y_pred', 'precision_por_clase', 'recall_por_clase',
+         'f1_por_clase', 'classes', 'class_distribution'].
+    - le (LabelEncoder): Objeto LabelEncoder utilizado para mapear las etiquetas codificadas
+      a sus nombres originales de clase.
+
+    Retorna:
+    - La funcion imprime las metricas y muestra la matriz de confusion en el notebook.
+    """
         
     print("Resultados del Modelo")
     print("---------------------")
@@ -335,11 +427,20 @@ def mostrar_resultados_notebook(resultados, le):
     
     
 
+
 def mostrar_resultados_modelo(resultados, le):
-    """Muestra los resultados de un modelo en Streamlit con el layout especificado."""
-    import streamlit as st
-    import pandas as pd
-    from plots import plot_confusion_matrix
+    """
+    Muestra los resultados de un modelo de clasificacion en una interfaz de Streamlit, 
+    incluyendo metricas globales, metricas por clase, distribución de clases y la matriz de confusion.
+
+    Parametros:
+    - resultados (dict): Diccionario con los resultados del modelo, generado por la funcion
+      de evaluación. Debe contener las metricas globales y por clase, así como las predicciones.
+    - le (LabelEncoder): Objeto LabelEncoder utilizado para recuperar los nombres de las clases originales.
+
+    Retorna:
+    - tuple: (col1, col2), objetos de columnas de Streamlit con el layout visual del reporte.
+    """
     
     # Crear dos columnas
     col1, col2 = st.columns(2)
@@ -351,7 +452,7 @@ def mostrar_resultados_modelo(resultados, le):
         tab_global, tab_clases, tab_detalle = st.tabs(["Global", "Por Clase", "Detalle"])
         
         with tab_global:
-            # Métricas globales
+            # Metricas globales
             g1, g2, g3, g4 = st.columns(4)
             with g1:
                 st.metric("Accuracy", f"{resultados['accuracy']:.3f}")
@@ -362,7 +463,7 @@ def mostrar_resultados_modelo(resultados, le):
             with g4:
                 st.metric("Kappa", f"{resultados['kappa']:.3f}")
             
-            # Distribución
+            # Distribucion
             st.caption(f"Muestras en test: {len(resultados['y_true'])}")
         
         with tab_clases:
@@ -403,286 +504,26 @@ def mostrar_resultados_modelo(resultados, le):
 
 
 
-def entrenar_evaluar_pytorch(model, X_train, X_test, y_train, y_test, le,
-                             epochs=50, batch_size=32, lr=0.001, device='cpu',
-                             class_weights=None, 
-                             nombre_bento=None):
-    
-    #Si nos pasan un DataFrame, guardamos sus columnas y extraemos los valores
-    feature_names = None
-    if isinstance(X_train, pd.DataFrame):
-        feature_names = X_train.columns.tolist()
-        X_train_data = X_train.values
-    else:
-        X_train_data = X_train
 
-    if isinstance(X_test, pd.DataFrame):
-        X_test_data = X_test.values
-    else:
-        X_test_data = X_test
-
-    if isinstance(y_train, pd.Series): y_train = y_train.values
-    if isinstance(y_test, pd.Series): y_test = y_test.values
-
-    #Convertir a tensores
-    X_train_tensor = torch.tensor(X_train_data, dtype=torch.float32)
-    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
-    X_test_tensor = torch.tensor(X_test_data, dtype=torch.float32)
-    y_test_tensor = torch.tensor(y_test, dtype=torch.long)
-    
-    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
-    
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    
-    model = model.to(device)
-    
-    # Definir el criterio
-    if class_weights is not None:
-        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
-        criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
-    else:
-        criterion = nn.CrossEntropyLoss()
-    
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    
-    # --- ENTRENAMIENTO ---
-    model.train()
-    for epoch in range(epochs):
-        for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)
-            optimizer.zero_grad()
-            outputs = model(xb)
-            loss = criterion(outputs, yb)
-            loss.backward()
-            optimizer.step()
-    
-    # --- EVALUACIÓN ---
-    model.eval()
-    all_preds = []
-    all_true = []
-    with torch.no_grad():
-        for xb, yb in test_loader:
-            xb = xb.to(device)
-            outputs = model(xb)
-            preds = torch.argmax(outputs, dim=1).cpu().numpy()
-            all_preds.extend(preds)
-            all_true.extend(yb.cpu().numpy()) # .cpu() por si acaso
-    
-    all_true = np.array(all_true)
-    all_preds = np.array(all_preds)
-    
-    # Metricas
-    acc = accuracy_score(all_true, all_preds)
-    f1_global = f1_score(all_true, all_preds, average='weighted')
-    
-    if nombre_bento:
-        bentoml.pytorch.save_model(
-            nombre_bento, 
-            model,
-            signatures={"__call__": {"batchable": True, "batch_dim": 0}}
-        )
-        
-        bentoml.sklearn.save_model("turboshaft_le", le)
-        
-        if feature_names:
-            bentoml.picklable_model.save_model("turboshaft_features", feature_names)
-        
-        print(f"Modelo {nombre_bento} guardado correctamente.")
-
-    resultados = {
-        'accuracy': acc,
-        'f1_global': f1_global,
-        'f1_por_clase': f1_score(all_true, all_preds, average=None),
-        'recall_por_clase': recall_score(all_true, all_preds, average=None), 
-        'precision_por_clase': precision_score(all_true, all_preds, average=None),  
-        'kappa': cohen_kappa_score(all_true, all_preds),  
-        'balanced_accuracy': balanced_accuracy_score(all_true, all_preds),  
-        'y_pred': all_preds,
-        'y_true': all_true,
-        'model': model,
-        'classes': le.classes_,  
-        'class_distribution': {clase: np.sum(all_true == i) for i, clase in enumerate(le.classes_)},  
-        'confusion_matrix': confusion_matrix(all_true, all_preds)  
-    }
-    
-    return resultados
-
-
-
-
-
-
-def entrenar_evaluar_lstm(model, 
-                          X_train=None, X_test=None, 
-                          y_train=None, y_test=None, 
-                          le=None, 
-                          train_dataset=None, test_dataset=None,
-                          epochs=50, batch_size=32, lr=0.001, 
-                          device='cpu', class_weights=None, 
-                          ventana_variable=False, collate_fn=None,
-                          ventana=50,
-                          nombre_bento=None):
-    """
-    Entrena y evalúa un modelo LSTM (con soporte BentoML).
-    - ventana_variable=False: usa LSTM_basico y tensores 3D.
-    - ventana_variable=True: usa LSTMModel con pack_padded_sequence.
-    """
-
-    #PREPARACIÓN BENTOML
-    feature_names = None
-    if X_train is not None and hasattr(X_train, 'columns'):
-        feature_names = X_train.columns.tolist()
-
-    #Crear DataLoaders
-    if ventana_variable:
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    else:
-        #Crear secuencias fijas
-        X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
-        X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
-
-        train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
-                                      torch.tensor(y_train_seq, dtype=torch.long))
-        test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
-                                     torch.tensor(y_test_seq, dtype=torch.long))
-
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size)
-
-    #Preparar modelo y criterio
-    model = model.to(device)
-    
-    if class_weights is not None:
-        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
-        criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
-    else:
-        criterion = nn.CrossEntropyLoss()
-        
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    #Entrenamiento
-    model.train()
-    for epoch in range(epochs):
-        for batch in train_loader:
-            optimizer.zero_grad()
-            
-            if ventana_variable:
-                xb, yb, lengths = batch
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb, lengths)
-            else:
-                xb, yb = batch
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb)
-
-            loss = criterion(outputs, yb)
-            loss.backward()
-            optimizer.step()
-
-    #Evaluación
-    model.eval()
-    all_preds, all_true = [], []
-    with torch.no_grad():
-        for batch in test_loader:
-            if ventana_variable:
-                xb, yb, lengths = batch
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb, lengths)
-            else:
-                xb, yb = batch
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb)
-
-            preds = torch.argmax(outputs, dim=1).cpu().numpy()
-            all_preds.extend(preds)
-            all_true.extend(yb.cpu().numpy())
-
-    #Métricas
-    all_true = np.array(all_true)
-    all_preds = np.array(all_preds)
-    all_labels = np.arange(len(le.classes_))
-
-    #BENTOML
-    if nombre_bento:
-        bentoml.pytorch.save_model(
-            nombre_bento, 
-            model,
-            signatures={
-                "__call__": {
-                    "batchable": True, 
-                    "batch_dim": 0
-                }
-            }
-        )
-        
-        if le is not None:
-            bentoml.sklearn.save_model("turboshaft_le", le)
-        
-        if feature_names:
-            bentoml.picklable_model.save_model("turboshaft_features", feature_names)
-        
-        print(f"Modelo {nombre_bento} guardado.")
-
-    resultados = {
-        'accuracy': accuracy_score(all_true, all_preds),
-        'balanced_accuracy': balanced_accuracy_score(all_true, all_preds),
-        'f1_global': f1_score(all_true, all_preds, average='weighted'),
-        'f1_por_clase': f1_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
-        'recall_por_clase': recall_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
-        'precision_por_clase': precision_score(all_true, all_preds, average=None, labels=all_labels, zero_division=0),
-        'kappa': cohen_kappa_score(all_true, all_preds),
-        'y_true': all_true,
-        'y_pred': all_preds,
-        'model': model,
-        'classes': le.classes_,
-        'class_distribution': {clase: np.sum(all_true == i) for i, clase in enumerate(le.classes_)},
-        'confusion_matrix': confusion_matrix(all_true, all_preds, labels=all_labels),
-        'ventana_usada': ventana,
-        'ventana_variable': ventana_variable
-    }
-
-    return resultados
-
-def crear_secuencias_variables(df, features_cols, target_col, sequence_id_col=None):
-    """
-    Divide el DataFrame en una lista de secuencias de longitud variable.
-
-    """
-    X_seqs = []
-    y_seqs = []
-    
-    if sequence_id_col and sequence_id_col in df.columns:
-        for _, group in df.groupby(sequence_id_col):
-            X_seqs.append(group[features_cols].values)
-            y_seqs.append(group[target_col].iloc[-1])
-            
-    else:
-        current_seq = []
-        
-        for i, row in df.iterrows():
-            current_seq.append(row[features_cols].values)
-            
-            if row[target_col] != 0: 
-                X_seqs.append(np.array(current_seq))
-                y_seqs.append(row[target_col])
-                current_seq = []
-                
-        if len(current_seq) > 0:
-            pass 
-
-    return X_seqs, y_seqs
 
 def mostrar_resultados_notebook_variable(resultados, le):
     """
-    Lo mismo que lo de arriba, pero ahora necesitamos tratar la matriz de confusión de manera diferente
+    Muestra los resultados de un modelo en notebook para el caso de modelos con ventana variable.
+    Incluye el mismo conjunto de metricas que la versión estandar, pero ajusta la visualizacion
+    de la matriz de confusión para manejar posibles diferencias en el numero de clases o etiquetas.
+
+    Parametros:
+    - resultados (dict): Diccionario con las metricas del modelo, incluyendo predicciones y valores reales.
+    - le (LabelEncoder): Objeto LabelEncoder con las clases originales del modelo.
+
+    Retorna:
+    - None. La función imprime las metricas globales y por clase, y muestra la matriz de confusion.
     """
     
     print("Resultados del Modelo (Variable)")
     print("--------------------------------")
 
+    # Metricas globales
     acc = resultados.get('accuracy', 0)
     bal_acc = resultados.get('balanced_accuracy', 0)
     f1 = resultados.get('f1_global', 0)
@@ -694,6 +535,7 @@ def mostrar_resultados_notebook_variable(resultados, le):
     print(f"Kappa: {kappa:.3f}")
     print(f"Muestras en test: {len(resultados['y_true'])}\n")
     
+    # Metricas por clase
     print("Métricas por Clase:")
     metrics_data = []
     clases = le.classes_
@@ -709,6 +551,8 @@ def mostrar_resultados_notebook_variable(resultados, le):
             'Recall': rec,
             'F1': f1_cls,
         })
+        
+        
     
     df_class_metrics = pd.DataFrame(metrics_data)
     display(df_class_metrics.style.format({
@@ -717,6 +561,7 @@ def mostrar_resultados_notebook_variable(resultados, le):
         'F1': '{:.3f}'
     }))
     
+    # Distribucion de clases
     print("Distribución de clases en el conjunto de test:")
     if 'class_distribution' in resultados:
         for clase, count in resultados['class_distribution'].items():
@@ -739,80 +584,84 @@ def mostrar_resultados_notebook_variable(resultados, le):
     plt.show()
 
 
-#----EXTRAS LSTM----#
-def crear_secuencias(X, y, ventana):
-    X_seq, y_seq = [], []
-    
-    for i in range(len(X) - ventana):
-        # Para cada posicion, tomar una secuencia de longitud de la ventana
-        X_seq.append(X[i:i+ventana])
-        y_seq.append(y[i+ventana-1])  # Etiqueta del ultimo paso
-    return np.array(X_seq), np.array(y_seq)
 
 
 
-def crear_dataloaders_ventana(X_train, y_train, X_test, y_test, batch_size=64, ventana=50, ventana_variable=False):
-    """
-    Crea DataLoaders para LSTM con ventana fija.
-    """
-    # Secuencias fijas
-    X_train_seq, y_train_seq = crear_secuencias(X_train, y_train, ventana)
-    X_test_seq, y_test_seq = crear_secuencias(X_test, y_test, ventana)
-    train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
-                                      torch.tensor(y_train_seq, dtype=torch.long))
-    test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
-                                     torch.tensor(y_test_seq, dtype=torch.long))
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size)
 
-    return train_loader, test_loader, X_train_seq, X_test_seq, y_train_seq, y_test_seq
+
 
 
 
 #----OTROS----#
 def definicion_paleta(df, columna):
     """
-    Genera un diccionario que asigna un color a cada valor único de la columna.
+    Genera un diccionario de colores que asigna un color unico a cada valor distinto
+    de una columna categorica del DataFrame, utilizando una paleta predefinida de Seaborn.
+
+    Parametros:
+    - df (pd.DataFrame): DataFrame que contiene la columna categorica.
+    - columna (str): Nombre de la columna para la cual se generará la paleta de colores.
+
+    Retorna:
+    - dict: Diccionario con pares {valor_categoria: color_RGB}, donde cada valor
+      unico de la columna esta asociado a un color diferente.
     """
+    # Obtener valores unicos
     variables = df[columna].unique().tolist()
+    
+    # Generar paleta de colores
     paleta = sns.color_palette("tab20", len(variables))
+    
+    # Mapear valores a colores
     color_map = {valor: paleta[i] for i, valor in enumerate(variables)}
+    
     return color_map
+
 
 
 
 
 def analisis_patrones_por_fallo(fallos, median_matrix):
     """
-    Analiza los patrones de los sensores por fallo.
+    Analiza los patrones de comportamiento de los sensores para cada tipo de fallo,
+    identificando los sensores con valores significativamente altos o bajos y el
+    sensor mas característico de cada tipo de fallo.
 
-    Parámetros:
-    - fallos (list): Lista de fallos a analizar. 
-    - median_matrix (pd.DataFrame): Matriz de medianas (fallos x sensores).
+    Parametros:
+    - fallos (list): Lista con los nombres o etiquetas de los fallos a analizar.
+    - median_matrix (pd.DataFrame): Matriz de medianas con los fallos en filas y
+      los sensores en columnas (valores estandarizados o centrados en torno al promedio).
+
+    Retorna:
+    - None. Imprime en consola los sensores con valores altos, bajos y el sensor
+      mas característico para cada tipo de fallo analizado.
     """
 
     print("Análisis de patrones por fallo:")
     print("--------------------------------")
 
+    # Analizar cada fallo
     for fallo in fallos:
         print(f"\n{fallo}:")
+        # Calculo de medianas para el fallo
         medians = median_matrix.loc[fallo]
         
-        #Sensores más altos que el promedio
+        #Sensores mas altos que el promedio
         altos = medians[medians > 0.5].sort_values(ascending=False)
-        altos_dict = {sensor: valor for sensor, valor in altos.items()}
 
+        # Si hay, printearlo
         if len(altos) > 0:
             print(f"  Sensores ALTOS: {', '.join([f'{s}:{v:.2f}' for s,v in altos.items()])}")
         
-        #Sensores más bajos que el promedio
+        
+        # Sensores mas bajos que el promedio
         bajos = medians[medians < -0.5].sort_values()
-        bajos_dict = {sensor: valor for sensor, valor in bajos.items()}
 
+        # Si hay, printearlo
         if len(bajos) > 0:
             print(f"  Sensores BAJOS: {', '.join([f'{s}:{v:.2f}' for s,v in bajos.items()])}")
         
-        #Sensor más característico
+        #Sensor mas caracteristico
         caracteristico = medians.abs().idxmax()
         
         print(f"  Sensor más CARACTERÍSTICO: {caracteristico} ({medians[caracteristico]:.2f})")
