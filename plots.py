@@ -25,15 +25,17 @@ def plot_distribuciones_outliers(df, df_stats):
     #Si es solo una distribucion, no hacemos subplots
     if len(todas_columnas) == 1:
         fig, ax = plt.subplots(figsize=(16, 8))
-        axes = [ax]
+        axes = [ax] #Lo metemos en una lista para poder iterar sobre el
     else:
+        #La altura de la figura crece dinámicamente
         fig, axes = plt.subplots(len(todas_columnas), 1, figsize=(16, 4 * len(todas_columnas)))
         #Si axes es un array 2D, aplanarlo para que matplotlib pueda graficarlo bien
         if hasattr(axes, 'flatten'):
-            axes = axes.flatten()
-        
+            axes = axes.flatten() 
+
+    #iteramos sobre cada variable para dibujarla. 
     for i, columna in enumerate(todas_columnas):
-        ax = axes[i]
+        ax = axes[i] #Seleccionamos el eje (gráfico) actual
 
         #Limites IQR
         lower = df_stats.loc[columna]['lower_bound']
@@ -71,6 +73,10 @@ def plot_correlacion_heatmap(corr_matrix, vmin=-1, vmax=1, title='Matriz de Corr
     vmin, vmax (float, opcional): Valores mínimo y máximo para el heatmap.
     title (str, opcional): Título del gráfico.
     """
+
+    #Generamos la máscara para el triángulo superior.
+    # Como la matriz de correlación es simétrica ocultamos la parte superior
+    # np.triu = Triangle Upper
     mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
     
     figsize=(16,12)
@@ -78,8 +84,18 @@ def plot_correlacion_heatmap(corr_matrix, vmin=-1, vmax=1, title='Matriz de Corr
 
 
     fig = plt.figure(figsize=figsize)
-    sns.heatmap(corr_matrix, mask=mask, annot=True, cmap=cmap, center=0,
-                square=True, fmt='.2f', cbar_kws={'shrink': .8}, vmin=vmin, vmax=vmax)
+    sns.heatmap(corr_matrix, 
+                mask=mask, 
+                annot=True, #escribe el valor numerico dentro de cada celda
+                cmap=cmap, #el mapa de colores
+                center=0, #fija el color blanco en el centro (para que veamos claro cuando hay y no hay correlacion)
+                square=True, #para que la celda no salga rectangular
+                fmt='.2f',  #pone los numeros en dos decimales
+                cbar_kws={'shrink': .8}, #reduce la barra de leyenda lateral al 80%
+                vmin=vmin, #para el limite superior e inferior de la escala de color
+                vmax=vmax)
+    
+    #'pad=20' ainade espacio entre el titulo y el grafico
     plt.title(title, fontsize=16, fontweight='bold', pad=20)
     
     return fig
@@ -102,13 +118,15 @@ def plot_confusion_matrix(y_true, y_pred, class_names, title="Matriz de Confusi�
     title : str
         Título del gráfico.
     """
-    #Si se pasan labels, forzamos la forma de la matriz
+    #Si se pasan labels, forzamos la forma de la matriz (aseguramos que la matriz tenga el tamaino y orden correcto)
     if labels is not None:
         cm = confusion_matrix(y_true, y_pred, labels=labels)
     else:
+        #si no hay labels, basado en los valores unicos encontrados.
         cm = confusion_matrix(y_true, y_pred)
     
     fig, ax = plt.subplots(figsize=(8,6))
+    #fmt='d' es formato 'decimal integer'. O sea, que pone 10 y no 10.00
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
     ax.set_xlabel("Predicción")
     ax.set_ylabel("Verdadero")
@@ -124,20 +142,20 @@ def plot_heatmap_medianas(median_matrix, title="Heatmap de medianas"):
     - median_matrix (pd.DataFrame): Matriz de medianas (fallos x sensores).
     - title (str, opcional): Título del gráfico.
     """
-    cmap='RdBu_r'
+    cmap='RdBu_r' #Paleta Divergente (Red-Blue reversed): Rojo para valores positivos altos, azul para negativos, blanco para neutros.
     figsize=(14,8)
     fig = plt.figure(figsize=figsize)
 
 
     sns.heatmap(
         median_matrix,
-        annot=True,
+        annot=True, #muestra el valor exacto de la mediana en la celda
         fmt='.2f',
         cmap=cmap,
-        center=0,
-        linewidths=1,
-        cbar_kws={'label': 'Mediana Normalizada'},
-        vmin=-1, vmax=1
+        center=0, #asegura que el color blanco corresponda al 0 (valor medio/normal)
+        linewidths=1, #dibuja lineas blancas entre celdas para separarlas visualmente
+        cbar_kws={'label': 'Mediana Normalizada'}, #etiqueta para la barra de color lateral
+        vmin=-1, vmax=1 #escala entre 1 y -1
     )
     plt.title(title, fontsize=14, fontweight='bold', pad=20)
     plt.xlabel('Sensores', fontsize=12)
@@ -169,18 +187,20 @@ def pie_chart(df, columna, paleta=None, titulo=None):
     sizes = conteos.values
 
     if paleta is None:
-        cmap = plt.get_cmap('tab20')
+        cmap = plt.get_cmap('tab20') #tab20 tiene 20 colores distintos
+        #creamos una lista de colores del tamano de nuestros datos
         paleta = [cmap(i) for i in range(len(labels))]
     
+    #manejo de nuestro diccionario de colores
     if isinstance(paleta, dict):
         colors = [paleta[label] for label in labels]
 
     #Pie chart
     ax.pie(
-        sizes,
+        sizes, #los datos numericos
         labels=labels,
-        autopct='%1.1f%%',
-        startangle=90,
+        autopct='%1.1f%%', #formato del porcentage interno (1 decimal)
+        startangle=90, #rotamos el grafico para que el primer trozo empiece a las 12 en punto
         colors=paleta
     )
 
@@ -195,13 +215,17 @@ def pie_chart(df, columna, paleta=None, titulo=None):
 
 
 def bar_chart(df, columna, paleta=None, title="Bar Chart", eje_x="Eje x", eje_y="Eje y"):
+    """
+    Genera un grafico de barras horizontales con etiquetas de datos y porcentajes
+    
+    """
     fig, ax1 = plt.subplots(figsize=(8,6))
 
     #Distribución de valores
     distribucion_valores = df[columna].value_counts()
 
     if paleta == None:
-        paleta = plt.get_cmap('tab20')
+        paleta = plt.get_cmap('tab20') #tab20 tiene 20 colores distintos
     
     #Gráfico de barras
     distribucion_valores.plot(
@@ -214,13 +238,17 @@ def bar_chart(df, columna, paleta=None, title="Bar Chart", eje_x="Eje x", eje_y=
     ax1.set_title(title, fontweight='bold', fontsize=14)
     ax1.set_xlabel(eje_x)
     ax1.set_ylabel(eje_y)
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(True, alpha=0.3) #rejilla suave vertical para ayudar a medir
 
-    max_val = max(distribucion_valores)
+    max_val = max(distribucion_valores) #calculamos el valor mas alto y ainadimos un 15% de margen extra a la derecha. lo hacemos para que el texto de las etiquetas no se corte fuera del grafico.
     ax1.set_xlim(0, max_val * 1.15)  #Que no sobresalga la barra
     
     for i, v in enumerate(distribucion_valores):
         porcentaje = v / distribucion_valores.sum() * 100
+        #posicion x: justo al final de la barra + un pequeino margen
+        #El texto: "Cantidad (Porcentaje%)"
+        #Alineacion vertical centrada con la barra
+        #Alineacion horizontal a la izquierda (el texto empieza ahi)
         ax1.text(v + 0.01 * max_val, i, f"{v} ({porcentaje:.1f}%)", va='center', ha='left', fontweight='bold')
 
     
@@ -240,8 +268,7 @@ def boxplots_por_sensor(df, sensores=None, fallos=None):
     - sensores (list, opcional): lista de columnas de sensores a graficar. Si es None, usa todas las numéricas excepto 'Fault_Label'.
     - fallos (list, opcional): lista de fallos a considerar. Si es None, usa todos los valores únicos de 'Fault_Label'.
 
-    Retorna:
-    - fig (matplotlib.figure.Figure): Figura con todos los boxplots.
+    Devuelve una figura con todos los boxplots.
     """
     if 'Fault_Label' not in df.columns:
         raise ValueError("El DataFrame debe contener la columna 'Fault_Label'.")
@@ -250,20 +277,25 @@ def boxplots_por_sensor(df, sensores=None, fallos=None):
     if fallos is not None and len(fallos) > 0:
         df = df[df['Fault_Label'].isin(fallos)]
     else:
+        #sino usamos todos los fallos
         fallos = df['Fault_Label'].unique().tolist()
 
     # Si se pasan sensores, usar solo esos
     if sensores is not None and len(sensores) > 0:
         sensores = [s for s in sensores if s in df.columns]
     else:
+        #sino usamos todos los sensores (todas las columnas numericas excepto la label)
         sensores = [col for col in df.select_dtypes(include='number').columns if col != 'Fault_Label']
 
-    # Crear figura
+    # Crear figura (altura dinamica para que los subplots no se aplasten entre si)
     fig, axes = plt.subplots(len(sensores), 1, figsize=(16, 4 * len(sensores)))
     if len(sensores) == 1:
         axes = [axes]
 
+    #generamos un grafico por sensor.
     for i, sensor in enumerate(sensores):
+        #creamos una lista de arrays. Cada elemento de la lista son los valores del sensor para un tipo de fallo específico.
+        #box_data = [ [valores_fallo_A], [valores_fallo_B], [valores_fallo_C] ]
         box_data = [df[df['Fault_Label'] == fallo][sensor].values for fallo in fallos]
         axes[i].boxplot(box_data, labels=fallos)
         axes[i].set_ylabel(sensor, fontsize=11)
@@ -292,17 +324,21 @@ def radar_plot(fallos, median_matrix, sensores, umbral=0.3, factor=3):
     factor (float, opcional): Factor para amplificar visualmente los valores
     """
 
-    # Crear figura y ángulos
+    # Crear figura y ángulos (configuracion del sistema de coordenadas polares)
     fig = plt.figure(figsize=(10, 8))
     ax = plt.subplot(111, polar=True)
+    #calculamos los angulos para cada sensor
+    #Dividimos el circulo (2*pi) en tantos trozos como sensores tengamos
     angles = np.linspace(0, 2*np.pi, len(sensores), endpoint=False).tolist()
     angles += angles[:1]
 
+    #repetimos el primer angulo al final de la lista para que la linea del grafico vuelva al punto de inicio y no quede abierta
     colors = plt.cm.tab10(np.linspace(0, 1, len(fallos)))
     
-    # Calcular todos los valores amplificados primero
+    #recopilamos todos los datos que vamos a pintar para decidir los limites del grafico.
     todos_valores = []
     for fallo in fallos:
+        #Extraemos valores y aplicamos el factor de amplificacion visual
         valores = median_matrix.loc[fallo, sensores].values * factor
         todos_valores.extend(valores)
     
@@ -323,18 +359,27 @@ def radar_plot(fallos, median_matrix, sensores, umbral=0.3, factor=3):
 
     # Dibujar cada fallo
     for idx, fallo in enumerate(fallos):
+        #Obtener datos y amplificar
         valores = median_matrix.loc[fallo, sensores].values * factor
+
+        #"Cerrar el círculo" de los datos
         valores_cerrar = np.concatenate((valores, [valores[0]]))
 
+        #dibujamos la linea y el relleno (la "telaraina").
         ax.plot(angles, valores_cerrar, 'o-', color=colors[idx], alpha=0.3, linewidth=2, label=fallo)
         ax.fill(angles, valores_cerrar, color=colors[idx], alpha=0.1)
 
+        #Resaltar puntos criticos
+        #recuperamos los valores Z originales (sin multiplicar por 'factor') para evaluar la importancia
         valores_z = median_matrix.loc[fallo, sensores].values
         activados = np.abs(valores_z) > umbral
         
         if activados.any():
+            #Creamos un array lleno de NaNs (vacio) y ponemos valores solo donde 'activados' es True
             puntos_y = np.where(activados, valores, np.nan)
+            #Cerramos el ciclo tambien para estos puntos (aunque sean sueltos, por consistencia de indices)
             puntos_y = np.concatenate((puntos_y, [puntos_y[0]]))
+            #Pintamos solo los puntos que superan el umbral con circulos mas grandes y solidos.
             ax.plot(angles, puntos_y, 'o', color=colors[idx], 
                    markersize=10, alpha=0.9)
             
@@ -355,7 +400,7 @@ def radar_plot(fallos, median_matrix, sensores, umbral=0.3, factor=3):
 
 def timeline_por_tipo_fallo(df, sensores, fallo=None, n_ejemplos=3):
     """
-    Muestra ejemplos aleatorios de un tipo de fallo.
+    Muestra ejemplos aleatorios de un tipo de fallo para visualizar su evolución temporal.
 
     Parámetros:
         - df (pd.DataFrame): DataFrame original con los valores de los sensores
@@ -375,11 +420,14 @@ def timeline_por_tipo_fallo(df, sensores, fallo=None, n_ejemplos=3):
     
     # Para cada ejemplo, mostrar ventana temporal
     fig, axes = plt.subplots(len(ejemplos), 1, figsize=(16, 4*len(ejemplos)))
+    #Pasamos axes a lista si solo hay 1 ejemplo (para que el bucle no falle)
     if len(ejemplos) == 1:
         axes = [axes]
     
+    #procesamos cada evento de fallo seleccionado
     for idx, (_, ejemplo) in enumerate(ejemplos.iterrows()):
         ax = axes[idx]
+        #fecha/hora exacta del fallo
         tiempo_ejemplo = ejemplo['Timestamp']
                 
         # Tomar ventana de tiempo (5 horas antes, 1 después)
@@ -393,7 +441,7 @@ def timeline_por_tipo_fallo(df, sensores, fallo=None, n_ejemplos=3):
             ax.text(0.5, 0.5, 'Sin datos en esta ventana', ha='center', va='center')
             continue
         
-        # Crear eje X de horas relativas
+        # Crear eje X de horas relativas (es decir, pasamos de fecha absoluta a horas relativas al fallo, ej -2.5horas)
         ventana['hora_relativa'] = (ventana['Timestamp'] - tiempo_ejemplo).dt.total_seconds() / 3600
         
         # Graficar cada sensor
@@ -438,14 +486,14 @@ def plot_cambio_5h(df, sensores):
     # Ordenar por tiempo
     df_sorted = df.sort_values('Timestamp').copy()
     
-    # Referencia Normal
+    # Referencia Normal (es decir, cual es el valor medio del sensor cuando la maquina funciona bien)
     referencia = df[df['Fault_Label'] == 'Normal'][sensores].mean()
     
     # Para cada fallo, calcular promedio 5h antes
     resultados = []
     
     for fallo in fallos:
-        # Encontrar instancias de este fallo
+        # Encontrar instancias de este fallo (cuando sucedio)
         indices = df_sorted[df_sorted['Fault_Label'] == fallo].index
         
         medias_5h = []
