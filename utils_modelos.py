@@ -91,33 +91,17 @@ def seleccion_caracteristicas(X, y):
 
 
 
+def preparar_datos_lstm(df, features, device):
+    X_raw = df[features].values
+    y_raw = df['target'].values
+
+    split = int(len(X_raw) * 0.8)
+    X_train_raw, X_test_raw = X_raw[:split], X_raw[split:]
+    y_train_raw, y_test_raw = y_raw[:split], y_raw[split:]
+
+    return X_train_raw, X_test_raw, y_train_raw, y_test_raw
 
 
-
-def selecccion_caracteristicas(X, y):
-    print(f"Características originales ({X.shape[1]}): {X.columns.tolist()}")
-
-    #Usamos Random Forest para ver qué sensores importan de verdad
-    sel_model = RandomForestClassifier(n_estimators=50, random_state=111, n_jobs=-1)
-    sel_model.fit(X, y)
-
-    #Obtenemos la importancia y seleccionamos las mejores
-    #cogemos los 7 mejores
-    importancias = pd.Series(sel_model.feature_importances_, index=X.columns)
-    mejores_features = importancias.nlargest(7).index.tolist()
-
-    #tambiém podríamos elegir las que superen un umbral
-    #mejores_features = importancias[importancias > 0.05].index.tolist()
-
-    print(f"Características seleccionadas ({len(mejores_features)}): {mejores_features}")
-
-    X = X[mejores_features]
-    
-
-    X_train, X_test, y_train, y_test = split_data(X, y)
-
-    print(f"Distribución de clases en entrenamiento: {np.bincount(y_train)}")
-    print(f"Distribución de clases en prueba: {np.bincount(y_test)}")
 
 
 def random_forest(X_train, X_test, y_train, y_test, le):
