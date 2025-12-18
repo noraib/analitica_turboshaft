@@ -118,20 +118,6 @@ def selecccion_caracteristicas(X, y):
 
 
 
-# def preparar_datos_lstm(df, features, device):
-#     X_raw = df[features].values
-#     y_raw = df['target'].values
-
-#     split = int(len(X_raw) * 0.8)
-#     X_train_raw, X_test_raw = X_raw[:split], X_raw[split:]
-#     y_train_raw, y_test_raw = y_raw[:split], y_raw[split:]
-
-#     return X_train_raw, X_test_raw, y_train_raw, y_test_raw
-
-
-
-
-
 def random_forest(X_train, X_test, y_train, y_test, le):
     rf_model = RandomForestClassifier(n_estimators=10, random_state=111, class_weight='balanced')
     resultados_rf = evaluar_modelo_scikit(rf_model, X_train, X_test, y_train, y_test, "Random Forest", le)

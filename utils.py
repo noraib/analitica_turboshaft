@@ -32,7 +32,6 @@ from torch.utils.data import TensorDataset, DataLoader
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 # Importaciones propias
-from modelos.ventana_lstm import SequenceDataset, collate_fn  
 from plots import plot_confusion_matrix  
 
 
